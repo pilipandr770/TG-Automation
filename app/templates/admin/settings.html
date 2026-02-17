@@ -1,0 +1,99 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Settings — Telegram Automation{% endblock %}
+
+{% block content %}
+<h4 class="mb-4"><i class="bi bi-gear me-2"></i>General Settings</h4>
+
+<div class="card bg-dark border-secondary">
+    <div class="card-body">
+        <form method="POST">
+            <div class="row g-4">
+                <div class="col-12">
+                    <h6 class="text-muted">Telegram Settings</h6>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Target Channel</label>
+                    <input type="text" name="target_channel" value="{{ settings.target_channel }}"
+                           class="form-control bg-dark text-light border-secondary" placeholder="@your_channel">
+                    <small class="form-text text-muted">Channel where content will be published</small>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Default Language</label>
+                    <select name="default_language" class="form-select bg-dark text-light border-secondary">
+                        <option value="en" {{ 'selected' if settings.default_language == 'en' }}>English</option>
+                        <option value="ar" {{ 'selected' if settings.default_language == 'ar' }}>Arabic</option>
+                        <option value="zh" {{ 'selected' if settings.default_language == 'zh' }}>Chinese</option>
+                        <option value="ru" {{ 'selected' if settings.default_language == 'ru' }}>Russian</option>
+                        <option value="de" {{ 'selected' if settings.default_language == 'de' }}>German</option>
+                        <option value="fr" {{ 'selected' if settings.default_language == 'fr' }}>French</option>
+                        <option value="es" {{ 'selected' if settings.default_language == 'es' }}>Spanish</option>
+                    </select>
+                </div>
+
+                <div class="col-12 mt-4">
+                    <h6 class="text-muted">Module 1: Discovery Settings</h6>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Discovery Interval (minutes)</label>
+                    <input type="number" name="discovery_interval_minutes" value="{{ settings.discovery_interval_minutes }}"
+                           class="form-control bg-dark text-light border-secondary" min="10">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Min Subscribers Filter</label>
+                    <input type="number" name="min_subscribers_filter" value="{{ settings.min_subscribers_filter }}"
+                           class="form-control bg-dark text-light border-secondary" min="0">
+                </div>
+
+                <div class="col-12 mt-4">
+                    <h6 class="text-muted">Module 2: Audience Scanning</h6>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Audience Scan Interval (minutes)</label>
+                    <input type="number" name="audience_scan_interval_minutes" value="{{ settings.audience_scan_interval_minutes }}"
+                           class="form-control bg-dark text-light border-secondary" min="5">
+                </div>
+
+                <div class="col-12 mt-4">
+                    <h6 class="text-muted">Module 3: Invitation Settings</h6>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Min Delay (seconds)</label>
+                    <input type="number" name="invitation_min_delay_seconds" value="{{ settings.invitation_min_delay_seconds }}"
+                           class="form-control bg-dark text-light border-secondary" min="30">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Max Delay (seconds)</label>
+                    <input type="number" name="invitation_max_delay_seconds" value="{{ settings.invitation_max_delay_seconds }}"
+                           class="form-control bg-dark text-light border-secondary" min="60">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Max Invitations per Day</label>
+                    <input type="number" name="max_invitations_per_day" value="{{ settings.max_invitations_per_day }}"
+                           class="form-control bg-dark text-light border-secondary" min="10">
+                </div>
+
+                <div class="col-12 mt-4">
+                    <h6 class="text-muted">Module 4: Publishing Settings</h6>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Publish Interval (hours)</label>
+                    <input type="number" name="publish_interval_hours" value="{{ settings.publish_interval_hours }}"
+                           class="form-control bg-dark text-light border-secondary" min="1">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Max Posts per Day</label>
+                    <input type="number" name="max_posts_per_day" value="{{ settings.max_posts_per_day }}"
+                           class="form-control bg-dark text-light border-secondary" min="1">
+                </div>
+
+                <div class="col-12 mt-4">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-save me-1"></i> Save Settings
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

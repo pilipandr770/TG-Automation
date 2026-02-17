@@ -1,0 +1,276 @@
+{% extends "admin/base.html" %}
+
+{% block title %}AI Instructions - Admin Panel{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <h1>🤖 System Instructions</h1>
+            <p class="text-muted">Configure AI behavior for different types of interactions</p>
+        </div>
+        <div class="col-md-6">
+            <div class="card bg-light">
+                <div class="card-body">
+                    <h6>Conversation Statistics</h6>
+                    <small>
+                        Total: <strong>{{ conversation_stats.total }}</strong> |
+                        Active: <strong>{{ conversation_stats.active }}</strong> |
+                        Messages: <strong>{{ conversation_stats.messages_total }}</strong>
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <ul class="nav nav-tabs mb-4" role="tablist">
+        <li class="nav-item">
+            <a class="nav-link active" data-bs-toggle="tab" href="#dm-instruction">
+                💬 Private Messages
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" data-bs-toggle="tab" href="#channel-instruction">
+                ⭐ Paid Comments
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" data-bs-toggle="tab" href="#help">
+                ℹ️ Help
+            </a>
+        </li>
+    </ul>
+
+    <!-- Tab Content -->
+    <div class="tab-content">
+
+        <!-- 1. DM Instruction Tab -->
+        <div class="tab-pane fade show active" id="dm-instruction" role="tabpanel">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">💬 Private Message Instruction</h5>
+                </div>
+                <div class="card-body">
+                    <form method="POST" action="{{  url_for('admin.instructions') }}">
+                        <div class="form-group mb-3">
+                            <label for="dm_instruction">System Instruction</label>
+                            <textarea class="form-control" id="dm_instruction" name="dm_instruction" 
+                                      rows="10" placeholder="Enter instruction for handling DM">{{ dm_instruction }}</textarea>
+                            <small class="form-text text-muted">
+                                This instruction tells the AI how to respond to private messages from users.
+                                Be specific about tone, length, and behavior.
+                            </small>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <button type="submit" name="action" value="save_dm" class="btn btn-success btn-block">
+                                    <i class="bi bi-check-circle"></i> Save DM Instruction
+                                </button>
+                            </div>
+                            <div class="col-md-6">
+                                <button type="submit" name="action" value="reset_dm" class="btn btn-secondary btn-block"
+                                        onclick="return confirm('Reset to default instruction?')">
+                                    <i class="bi bi-arrow-counterclockwise"></i> Reset to Default
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+
+                    <hr>
+
+                    <h6 class="mt-4">📋 Template Examples</h6>
+                    <div class="accordion" id="dmExamples">
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" 
+                                        data-bs-target="#dmExample1">
+                                    Friendly & Helpful (Recommended)
+                                </button>
+                            </h2>
+                            <div id="dmExample1" class="accordion-collapse collapse" data-bs-parent="#dmExamples">
+                                <div class="accordion-body">
+                                    <pre><code>You are a helpful and friendly assistant for our Telegram community.
+Be concise, respond in user's language, keep it 2-3 sentences.
+Provide value, ask clarifying questions, stay on topic.</code></pre>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" 
+                                        data-bs-target="#dmExample2">
+                                    Professional & Concise
+                                </button>
+                            </h2>
+                            <div id="dmExample2" class="accordion-collapse collapse" data-bs-parent="#dmExamples">
+                                <div class="accordion-body">
+                                    <pre><code>You are a professional assistant. Respond briefly and directly.
+Use the same language as the user. One sentence max.
+Be helpful without over-explaining. Acknowledge their question.</code></pre>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. Channel Comment Instruction Tab -->
+        <div class="tab-pane fade" id="channel-instruction" role="tabpanel">
+            <div class="card">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">⭐ Paid Channel Comment Instruction</h5>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <strong>💡 Note:</strong> This instruction is used when responding to paid comments on channel posts.
+                        Users pay Stars (Telegram premium currency) to post comments, so provide premium-quality responses.
+                    </div>
+
+                    <form method="POST" action="{{ url_for('admin.instructions') }}">
+                        <div class="form-group mb-3">
+                            <label for="channel_instruction">System Instruction</label>
+                            <textarea class="form-control" id="channel_instruction" name="channel_instruction" 
+                                      rows="10" placeholder="Enter instruction for channel comments">{{ channel_instruction }}</textarea>
+                            <small class="form-text text-muted">
+                                This instruction applies to responses for paid comments on your channel posts.
+                                Users paid Stars for this, so be extra helpful and professional.
+                            </small>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <button type="submit" name="action" value="save_channel" class="btn btn-success btn-block">
+                                    <i class="bi bi-check-circle"></i> Save Channel Instruction
+                                </button>
+                            </div>
+                            <div class="col-md-6">
+                                <button type="submit" name="action" value="reset_channel" class="btn btn-secondary btn-block"
+                                        onclick="return confirm('Reset to default instruction?')">
+                                    <i class="bi bi-arrow-counterclockwise"></i> Reset to Default
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+
+                    <hr>
+
+                    <h6 class="mt-4">📋 Template Examples</h6>
+                    <div class="accordion" id="channelExamples">
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" 
+                                        data-bs-target="#channelExample1">
+                                    Premium Quality (Recommended)
+                                </button>
+                            </h2>
+                            <div id="channelExample1" class="accordion-collapse collapse" data-bs-parent="#channelExamples">
+                                <div class="accordion-body">
+                                    <pre><code>You are a premium community moderator. This user paid Stars for their comment.
+Provide a high-quality, thoughtful response. Be professional but warm.
+Thank them, address their question directly, provide immediate value.
+Keep to 2-3 sentences.</code></pre>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" 
+                                        data-bs-target="#channelExample2">
+                                    VIP Treatment
+                                </button>
+                            </h2>
+                            <div id="channelExample2" class="accordion-collapse collapse" data-bs-parent="#channelExamples">
+                                <div class="accordion-body">
+                                    <pre><code>This is a VIP comment (user paid Stars). Give special attention.
+Respond with personalized, detailed, and valuable insights.
+Make them feel appreciated. Go above and beyond.
+Use their language. Maximum 3-4 sentences.</code></pre>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. Help Tab -->
+        <div class="tab-pane fade" id="help" role="tabpanel">
+            <div class="card">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0">ℹ️ Instructions Guide</h5>
+                </div>
+                <div class="card-body">
+
+                    <h6 class="mt-4">📌 How It Works</h6>
+                    <p>
+                        The system instructions you set here are used by the AI when generating responses.
+                        Your instructions are combined with conversation context (user info, message history) 
+                        to create the full system prompt.
+                    </p>
+
+                    <h6>🎯 Best Practices</h6>
+                    <ul>
+                        <li><strong>Be specific:</strong> Tell the AI the tone, length, and style you want</li>
+                        <li><strong>Set rules:</strong> Use "DO" and "DON'T" to guide behavior</li>
+                        <li><strong>Keep it concise:</strong> The AI understands well-structured instructions</li>
+                        <li><strong>Test responses:</strong> Send test messages to see how AI responds</li>
+                        <li><strong>Iterate:</strong> Refine instructions based on actual responses</li>
+                    </ul>
+
+                    <h6>⚡ Variables & Context</h6>
+                    <p class="text-muted">
+                        Your instructions are automatically combined with:
+                    </p>
+                    <ul>
+                        <li>User information (name, username, subscriber status)</li>
+                        <li>Conversation history (last 10 messages)</li>
+                        <li>Conversation metadata (message count, language detected)</li>
+                    </ul>
+
+                    <h6>✅ Example Instructions</h6>
+
+                    <div class="example-card p-3 bg-light rounded mb-3">
+                        <small><strong>Short & Fast:</strong></small>
+                        <pre><code>One-sentence response. Be helpful. Stay on topic. Use user's language.</code></pre>
+                    </div>
+
+                    <div class="example-card p-3 bg-light rounded mb-3">
+                        <small><strong>Detailed & Educational:</strong></small>
+                        <pre><code>Provide comprehensive answers in 3-4 sentences. Explain "why" not just "what".
+Use examples if helpful. Be educational but not overwhelming.</code></pre>
+                    </div>
+
+                    <div class="example-card p-3 bg-light rounded mb-3">
+                        <small><strong>Community Moderator:</strong></small>
+                        <pre><code>Be friendly and professional. Acknowledge their question. Provide clear answer.
+If unclear, ask for clarification. Stay positive. Link to resources if relevant.</code></pre>
+                    </div>
+
+                    <h6 class="mt-4">🔗 Related Features</h6>
+                    <ul>
+                        <li><a href="{{ url_for('admin.conversations') }}">View Conversations</a> - See all active conversations</li>
+                        <li><a href="{{ url_for('admin.openai_settings') }}">OpenAI Settings</a> - Adjust model and budget</li>
+                        <li><a href="{{ url_for('admin.settings') }}">General Settings</a> - Configure system parameters</li>
+                    </ul>
+
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+</div>
+
+<style>
+    .example-card pre {
+        margin: 0;
+        font-size: 0.85rem;
+    }
+    .card-header h5, .card-header h6 {
+        margin-bottom: 0;
+    }
+</style>
+{% endblock %}

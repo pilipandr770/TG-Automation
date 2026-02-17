@@ -1,0 +1,169 @@
+services:
+  # 1. Flask Web Application (Admin Panel)
+  - type: web
+    name: telegram-automation
+    runtime: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn --timeout 120 --workers 2 wsgi:app"
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: telegram-automation-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: telegram-redis
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: TELEGRAM_API_ID
+        sync: false
+      - key: TELEGRAM_API_HASH
+        sync: false
+      - key: TELEGRAM_PHONE
+        sync: false
+      - key: TELEGRAM_TARGET_CHANNEL
+        sync: false
+
+  # 2. Telethon Long-Running Worker (24/7 Telegram connection)
+  - type: worker
+    name: telethon-worker
+    runtime: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python telethon_runner.py"
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: telegram-automation-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: telegram-redis
+          property: connectionString
+      - key: SECRET_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: TELEGRAM_API_ID
+        sync: false
+      - key: TELEGRAM_API_HASH
+        sync: false
+      - key: TELEGRAM_PHONE
+        sync: false
+      - key: TELEGRAM_TARGET_CHANNEL
+        sync: false
+
+  # 3. RQ Worker for on-demand batch tasks
+  - type: worker
+    name: rq-worker
+    runtime: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python worker.py"
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: telegram-automation-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: telegram-redis
+          property: connectionString
+      - key: SECRET_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+
+  # 4. Cron: Invitation batch (every 30 minutes)
+  - type: cron
+    name: invitation-batch
+    runtime: python
+    schedule: "*/30 * * * *"
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python -c \"from app import create_app; app = create_app(); app.app_context().push(); from app.services.invitation_service import get_invitation_service; import asyncio; s = get_invitation_service(); asyncio.run(s.run_invitation_batch(limit=10)) if s else print('Service unavailable')\""
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: telegram-automation-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: telegram-redis
+          property: connectionString
+      - key: SECRET_KEY
+        sync: false
+      - key: TELEGRAM_API_ID
+        sync: false
+      - key: TELEGRAM_API_HASH
+        sync: false
+      - key: TELEGRAM_PHONE
+        sync: false
+
+  # 5. Cron: Content publishing (every 2 hours)
+  - type: cron
+    name: content-publisher
+    runtime: python
+    schedule: "0 */2 * * *"
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python -c \"from app import create_app; app = create_app(); app.app_context().push(); from app.services.publisher_service import get_publisher_service; import asyncio; s = get_publisher_service(); asyncio.run(s.run_publish_cycle(max_posts=3)) if s else print('Service unavailable')\""
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: telegram-automation-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: telegram-redis
+          property: connectionString
+      - key: SECRET_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: TELEGRAM_API_ID
+        sync: false
+      - key: TELEGRAM_API_HASH
+        sync: false
+
+  # 6. Cron: Session backup (every hour)
+  - type: cron
+    name: session-backup
+    runtime: python
+    schedule: "0 * * * *"
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python -c \"from app import create_app; app = create_app(); app.app_context().push(); from app.services.telegram_client import get_telegram_client_manager; m = get_telegram_client_manager(); m.save_session_to_db() if m else print('No session')\""
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: telegram-automation-db
+          property: connectionString
+      - key: SECRET_KEY
+        sync: false
+
+  # Redis
+  - type: redis
+    name: telegram-redis
+    plan: free
+    ipAllowList: []
+
+databases:
+  - name: telegram-automation-db
+    plan: free
+    databaseName: telegram_automation

@@ -1,0 +1,133 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Paid Content — Telegram Automation{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0"><i class="bi bi-star me-2"></i>Paid Content</h4>
+    <span class="badge bg-secondary fs-6">{{ items|length }} items</span>
+</div>
+
+<!-- Add Content Form -->
+<div class="card bg-dark border-secondary mb-4">
+    <div class="card-header border-secondary">
+        <h6 class="mb-0"><i class="bi bi-plus-circle me-2"></i>Add Content</h6>
+    </div>
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('admin.paid_content') }}" enctype="multipart/form-data">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label">Title</label>
+                    <input type="text" name="title" class="form-control bg-dark text-light border-secondary"
+                           placeholder="e.g. Premium Trading Guide" required>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Content Type</label>
+                    <select name="content_type" class="form-select bg-dark text-light border-secondary">
+                        <option value="document">Document</option>
+                        <option value="video">Video</option>
+                        <option value="audio">Audio</option>
+                        <option value="image">Image</option>
+                        <option value="text">Text</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Price (Stars)</label>
+                    <input type="number" name="price_stars" class="form-control bg-dark text-light border-secondary"
+                           value="10" min="1" required>
+                </div>
+                <div class="col-md-12">
+                    <label class="form-label">Description</label>
+                    <textarea name="description" rows="2" class="form-control bg-dark text-light border-secondary"
+                              placeholder="Brief description of the content..."></textarea>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Category</label>
+                    <input type="text" name="category" class="form-control bg-dark text-light border-secondary"
+                           placeholder="e.g. Trading, Education">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Language</label>
+                    <select name="language" class="form-select bg-dark text-light border-secondary">
+                        <option value="en">English</option>
+                        <option value="ar">Arabic</option>
+                        <option value="zh">Chinese</option>
+                        <option value="ru">Russian</option>
+                        <option value="de">German</option>
+                        <option value="fr">French</option>
+                        <option value="es">Spanish</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">File</label>
+                    <input type="file" name="file" class="form-control bg-dark text-light border-secondary">
+                </div>
+                <div class="col-12">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-plus-lg me-1"></i> Add Content
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Content Grid -->
+<div class="row g-3">
+    {% for item in items %}
+    <div class="col-lg-4 col-md-6">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                    <div class="stat-icon bg-{{ 'primary' if item.content_type == 'document' else 'danger' if item.content_type == 'video' else 'success' if item.content_type == 'audio' else 'info' if item.content_type == 'image' else 'secondary' }} bg-opacity-25 text-{{ 'primary' if item.content_type == 'document' else 'danger' if item.content_type == 'video' else 'success' if item.content_type == 'audio' else 'info' if item.content_type == 'image' else 'secondary' }}">
+                        <i class="bi bi-{{ 'file-earmark-text' if item.content_type == 'document' else 'camera-video' if item.content_type == 'video' else 'music-note' if item.content_type == 'audio' else 'image' if item.content_type == 'image' else 'file-text' }}"></i>
+                    </div>
+                    <span class="badge bg-warning text-dark fs-6">
+                        <i class="bi bi-star-fill me-1"></i>{{ item.price_stars }}
+                    </span>
+                </div>
+                <h6 class="card-title">{{ item.title }}</h6>
+                <p class="card-text small text-muted">{{ item.description|truncate(80) if item.description else 'No description' }}</p>
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        {% if item.category %}
+                            <span class="badge bg-secondary me-1">{{ item.category }}</span>
+                        {% endif %}
+                        <span class="badge bg-secondary">{{ item.language|upper if item.language else 'EN' }}</span>
+                    </div>
+                    <small class="text-muted">
+                        <i class="bi bi-cart-check me-1"></i>{{ item.sales_count or 0 }} sales
+                    </small>
+                </div>
+            </div>
+            <div class="card-footer border-secondary d-flex justify-content-end gap-2">
+                <form method="POST" action="{{ url_for('admin.toggle_paid_content', id=item.id) }}" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-outline-{{ 'warning' if item.active else 'success' }}"
+                            title="{{ 'Deactivate' if item.active else 'Activate' }}">
+                        <i class="bi bi-{{ 'pause' if item.active else 'play' }}"></i>
+                    </button>
+                </form>
+                <form method="POST" action="{{ url_for('admin.delete_paid_content', id=item.id) }}" class="d-inline"
+                      onsubmit="return confirm('Delete this content?')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="col-12">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body text-center text-muted py-5">
+                <i class="bi bi-star fs-1 d-block mb-2"></i>
+                No paid content added yet
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

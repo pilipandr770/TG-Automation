@@ -1,0 +1,174 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Invitation Templates — Telegram Automation{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0"><i class="bi bi-envelope me-2"></i>Invitation Templates</h4>
+    <span class="badge bg-secondary fs-6">{{ templates|length }} templates</span>
+</div>
+
+<!-- Add Template Form -->
+<div class="card bg-dark border-secondary mb-4">
+    <div class="card-header border-secondary">
+        <h6 class="mb-0"><i class="bi bi-plus-circle me-2"></i>Add Template</h6>
+    </div>
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('admin.templates') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label">Name</label>
+                    <input type="text" name="name" class="form-control bg-dark text-light border-secondary"
+                           placeholder="e.g. Friendly Welcome" required>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Language</label>
+                    <select name="language" class="form-select bg-dark text-light border-secondary">
+                        <option value="en">English</option>
+                        <option value="ar">Arabic</option>
+                        <option value="zh">Chinese</option>
+                        <option value="ru">Russian</option>
+                        <option value="de">German</option>
+                        <option value="fr">French</option>
+                        <option value="es">Spanish</option>
+                    </select>
+                </div>
+                <div class="col-12">
+                    <label class="form-label">Message Body</label>
+                    <textarea name="body" rows="4" class="form-control bg-dark text-light border-secondary"
+                              placeholder="Hi {first_name}! I noticed you're interested in..." required></textarea>
+                    <div class="form-text">
+                        Available placeholders: <code>{first_name}</code>, <code>{last_name}</code>, <code>{username}</code>
+                    </div>
+                </div>
+                <div class="col-12">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-plus-lg me-1"></i> Add Template
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Templates Table -->
+<div class="card bg-dark border-secondary">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-dark table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Body</th>
+                        <th>Language</th>
+                        <th>Active</th>
+                        <th>Uses</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for t in templates %}
+                    <tr>
+                        <td class="fw-semibold">{{ t.name }}</td>
+                        <td>
+                            <small class="text-muted">{{ t.body|truncate(60) }}</small>
+                        </td>
+                        <td><span class="badge bg-secondary">{{ t.language|upper }}</span></td>
+                        <td>
+                            {% if t.active %}
+                                <span class="badge bg-success">Active</span>
+                            {% else %}
+                                <span class="badge bg-danger">Inactive</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ t.use_count or 0 }}</td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button type="button" class="btn btn-outline-primary" title="Edit"
+                                        data-bs-toggle="modal" data-bs-target="#editModal{{ t.id }}">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <form method="POST" action="{{ url_for('admin.toggle_template', id=t.id) }}" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-outline-{{ 'warning' if t.active else 'success' }}"
+                                            title="{{ 'Deactivate' if t.active else 'Activate' }}">
+                                        <i class="bi bi-{{ 'pause' if t.active else 'play' }}"></i>
+                                    </button>
+                                </form>
+                                <form method="POST" action="{{ url_for('admin.delete_template', id=t.id) }}" class="d-inline"
+                                      onsubmit="return confirm('Delete this template?')">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-outline-danger" title="Delete">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+
+                    <!-- Edit Modal -->
+                    <div class="modal fade" id="editModal{{ t.id }}" tabindex="-1">
+                        <div class="modal-dialog modal-lg">
+                            <div class="modal-content bg-dark border-secondary">
+                                <form method="POST" action="{{ url_for('admin.edit_template', id=t.id) }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <div class="modal-header border-secondary">
+                                        <h5 class="modal-title">Edit: {{ t.name }}</h5>
+                                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                                    </div>
+                                    <div class="modal-body">
+                                        <div class="row g-3">
+                                            <div class="col-md-6">
+                                                <label class="form-label">Name</label>
+                                                <input type="text" name="name" value="{{ t.name }}"
+                                                       class="form-control bg-dark text-light border-secondary" required>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label class="form-label">Language</label>
+                                                <select name="language" class="form-select bg-dark text-light border-secondary">
+                                                    <option value="en" {{ 'selected' if t.language == 'en' }}>English</option>
+                                                    <option value="ar" {{ 'selected' if t.language == 'ar' }}>Arabic</option>
+                                                    <option value="zh" {{ 'selected' if t.language == 'zh' }}>Chinese</option>
+                                                    <option value="ru" {{ 'selected' if t.language == 'ru' }}>Russian</option>
+                                                    <option value="de" {{ 'selected' if t.language == 'de' }}>German</option>
+                                                    <option value="fr" {{ 'selected' if t.language == 'fr' }}>French</option>
+                                                    <option value="es" {{ 'selected' if t.language == 'es' }}>Spanish</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-12">
+                                                <label class="form-label">Message Body</label>
+                                                <textarea name="body" rows="5"
+                                                          class="form-control bg-dark text-light border-secondary" required>{{ t.body }}</textarea>
+                                                <div class="form-text">
+                                                    Placeholders: <code>{first_name}</code>, <code>{last_name}</code>, <code>{username}</code>
+                                                </div>
+                                            </div>
+                                            <div class="col-12">
+                                                <div class="form-check">
+                                                    <input type="checkbox" name="active" class="form-check-input"
+                                                           {{ 'checked' if t.active }}>
+                                                    <label class="form-check-label">Active</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="modal-footer border-secondary">
+                                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" class="text-center text-muted py-4">No templates created yet</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

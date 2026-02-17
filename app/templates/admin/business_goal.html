@@ -1,0 +1,164 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Бизнес-цель и ключевые слова{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-lg-8">
+            <h1 class="mb-4">
+                <i class="bi bi-target"></i> Бизнес-цель и ключевые слова
+            </h1>
+            
+            <!-- Business Goal Section -->
+            <div class="card mb-4 border-primary">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-lightbulb"></i> Опишите вашу бизнес-цель
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-3">
+                        Опишите чем вы занимаетесь, что вы продаёте или какую услугу предоставляете.
+                        Искусственный интеллект автоматически подберёт оптимальные ключевые слова для поиска релевантных каналов.
+                    </p>
+                    
+                    <form method="POST" action="{{ url_for('admin.business_goal') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="mb-3">
+                            <label for="goal_description" class="form-label">Ваша бизнес-цель:</label>
+                            <textarea 
+                                id="goal_description"
+                                name="goal_description" 
+                                class="form-control bg-secondary text-white border-secondary"
+                                rows="5"
+                                placeholder="Например: Продажа контента для взрослых&#10;или: Подбор и продажа автомобилей&#10;или: Онлайн-курсы по искусственному интеллекту&#10;или: Торговля криптовалютой и NFT"
+                            >{{ business_goal }}</textarea>
+                        </div>
+                        
+                        <div class="d-flex gap-2">
+                            <button type="submit" name="action" value="save_goal" class="btn btn-primary">
+                                <i class="bi bi-save"></i> Сохранить цель
+                            </button>
+                            
+                            {% if business_goal %}
+                            <button type="submit" name="action" value="generate_keywords" class="btn btn-success">
+                                <i class="bi bi-sparkles"></i> Генерировать ключевые слова (OpenAI)
+                            </button>
+                            {% endif %}
+                        </div>
+                    </form>
+                </div>
+            </div>
+            
+            <!-- Generated Keywords Section -->
+            {% if keywords %}
+            <div class="card border-success">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-tags"></i> Сгенерированные ключевые слова ({{ keywords|length }})
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-3">
+                        Эти ключевые слова используются для автоматического поиска релевантных каналов в Telegram.
+                        Приложение будет искать каналы, содержащие эти слова в названии или описании.
+                    </p>
+                    
+                    <div class="d-flex flex-wrap gap-2">
+                        {% for keyword in keywords %}
+                        <span class="badge bg-success" title="Приоритет: {{ keyword.priority }}">
+                            {{ keyword.keyword }}
+                        </span>
+                        {% endfor %}
+                    </div>
+                    
+                    <hr class="my-3">
+                    
+                    <div class="alert alert-info small">
+                        <i class="bi bi-info-circle"></i>
+                        <strong>Активно:</strong> Все ключевые слова активны и используются в процессе поиска.
+                        Цикл поиска запускается каждые 5 минут.
+                    </div>
+                    
+                    <div class="alert alert-warning small">
+                        <i class="bi bi-gear"></i>
+                        <strong>Совет:</strong> Если результаты поиска неудовлетворительны, 
+                        уточните описание бизнес-цели и генерируйте ключевые слова заново.
+                    </div>
+                </div>
+            </div>
+            {% else %}
+            <div class="card border-warning">
+                <div class="card-body p-4 text-center">
+                    <p class="text-muted">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        Ещё нет сгенерированных ключевых слов.
+                    </p>
+                    <p class="small text-muted">
+                        Опишите вашу бизнес-цель выше, сохраните её и нажмите "Генерировать ключевые слова"
+                    </p>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+        
+        <!-- Info Sidebar -->
+        <div class="col-lg-4">
+            <div class="card mb-4 border-info">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0"><i class="bi bi-info-circle"></i> Как это работает?</h5>
+                </div>
+                <div class="card-body">
+                    <ol class="small">
+                        <li class="mb-2">
+                            <strong>Опишите цель:</strong><br>
+                            Введите описание вашего бизнеса или того, что вы продаёте
+                        </li>
+                        <li class="mb-2">
+                            <strong>Генерируйте слова:</strong><br>
+                            ИИ автоматически создаст 20+ оптимальных ключевых слов
+                        </li>
+                        <li class="mb-2">
+                            <strong>Автопоиск:</strong><br>
+                            Приложение ищет каналы по этим словам каждые 5 минут
+                        </li>
+                        <li>
+                            <strong>Присоединение:</strong><br>
+                            Автоматически присоединяется к релевантным каналам
+                        </li>
+                    </ol>
+                </div>
+            </div>
+            
+            <div class="card border-secondary">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0"><i class="bi bi-lightbulb"></i> Примеры</h5>
+                </div>
+                <div class="card-body">
+                    <div class="small">
+                        <p class="mb-2"><strong>Эротический контент:</strong></p>
+                        <p class="text-muted mb-3">"Продажа эротического контента для взрослых, подписка на XXX материалы"</p>
+                        
+                        <p class="mb-2"><strong>Авто:</strong></p>
+                        <p class="text-muted mb-3">"Продажа подержанных автомобилей, подбор авто, автокредиты"</p>
+                        
+                        <p class="mb-2"><strong>Курсы:</strong></p>
+                        <p class="text-muted mb-3">"Онлайн-курсы по машинному обучению, ChatGPT, нейросети"</p>
+                        
+                        <p class="mb-2"><strong>Крипто:</strong></p>
+                        <p class="text-muted">"Торговля криптовалютой, биржи, прибыльные инвестиции"</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.badge {
+    font-size: 0.9rem;
+    padding: 0.5rem 0.8rem;
+}
+</style>
+{% endblock %}

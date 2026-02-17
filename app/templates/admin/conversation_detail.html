@@ -1,0 +1,41 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Conversation — Telegram Automation{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <a href="{{ url_for('admin.conversations') }}" class="btn btn-sm btn-outline-secondary mb-2">
+            <i class="bi bi-arrow-left"></i> Back
+        </a>
+        <h4 class="mb-0">
+            <i class="bi bi-chat-dots me-2"></i>Conversation with {{ conversation.first_name or conversation.username or conversation.telegram_user_id }}
+        </h4>
+    </div>
+    <div class="text-end">
+        <small class="text-muted d-block">Total Messages: {{ conversation.total_messages }}</small>
+        <small class="text-warning">
+            <i class="bi bi-star-fill me-1"></i>Stars Paid: {{ conversation.total_stars_paid or 0 }}
+        </small>
+    </div>
+</div>
+
+<!-- Messages -->
+<div class="card bg-dark border-secondary" style="height: 70vh; display: flex; flex-direction: column;">
+    <div class="card-body p-3" style="overflow-y: auto; flex: 1;">
+        {% for msg in messages %}
+        <div class="mb-3 d-flex {{ 'justify-content-end' if msg.role == 'assistant' else 'justify-content-start' }}">
+            <div class="p-3 rounded {{ 'bg-primary bg-opacity-25 border border-primary' if msg.role == 'assistant' else 'bg-secondary bg-opacity-25 border border-secondary' }}" style="max-width: 70%;">
+                <div class="small mb-1">
+                    <strong>{{ 'AI Assistant' if msg.role == 'assistant' else 'User' }}</strong>
+                    <span class="text-muted ms-2">{{ msg.created_at.strftime('%H:%M') if msg.created_at else '' }}</span>
+                </div>
+                <div>{{ msg.content }}</div>
+            </div>
+        </div>
+        {% else %}
+        <div class="text-center text-muted py-5">No messages yet</div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,236 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Discovery Monitor — Telegram Automation{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0"><i class="bi bi-search me-2"></i>Discovery Monitor</h4>
+</div>
+
+<!-- Overall Stats -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body text-center">
+                <h5 class="text-muted">Joined Channels</h5>
+                <h3 class="text-success">{{ joined_count }}</h3>
+                <small class="text-muted">actively subscribed</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body text-center">
+                <h5 class="text-muted">Total Discovered</h5>
+                <h3 class="text-info">{{ total_discovered }}</h3>
+                <small class="text-muted">all channels found</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body text-center">
+                <h5 class="text-muted">Active Keywords</h5>
+                <h3 class="text-warning">{{ keyword_stats.active }}</h3>
+                <small class="text-muted">searching now</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body text-center">
+                <h5 class="text-muted">Exhausted Keywords</h5>
+                <h3 class="text-danger">{{ keyword_stats.exhausted }}</h3>
+                <small class="text-muted">needs regeneration</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Telegram Limits -->
+{% if limit_status.error %}
+<div class="alert alert-danger" role="alert">
+    <strong>Error:</strong> {{ limit_status.error }}
+</div>
+{% else %}
+<div class="card bg-dark border-secondary mb-4">
+    <div class="card-header bg-darker border-secondary">
+        <h6 class="mb-0"><i class="bi bi-exclamation-triangle me-2"></i>Telegram API Limits</h6>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-6">
+                <p class="mb-2">
+                    <strong>Joined Channels:</strong> 
+                    <code>{{ limit_status.joined_channels }} / {{ limit_status.practical_limit }}</code>
+                </p>
+                <div class="progress" style="height: 25px;">
+                    {% set usage_pct = limit_status.usage_percent %}
+                    {% set color = 'success' if usage_pct < 50 else 'warning' if usage_pct < 80 else 'danger' %}
+                    <div class="progress-bar bg-{{ color }}" role="progressbar" 
+                         style="width: {{ usage_pct }}%;text-align:center;color:#000" 
+                         aria-valuenow="{{ usage_pct }}" aria-valuemin="0" aria-valuemax="100">
+                        {{ usage_pct }}%
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <dl class="row small">
+                    <dt class="col-sm-6">Remaining Capacity:</dt>
+                    <dd class="col-sm-6">
+                        <span class="badge bg-info">{{ limit_status.remaining_capacity }}</span>
+                    </dd>
+                    <dt class="col-sm-6">Status:</dt>
+                    <dd class="col-sm-6">
+                        {% if limit_status.approaching_limit %}
+                            <span class="badge bg-danger">APPROACHING LIMIT</span>
+                        {% else %}
+                            <span class="badge bg-success">NORMAL</span>
+                        {% endif %}
+                    </dd>
+                </dl>
+            </div>
+        </div>
+        <div class="alert alert-info mt-3 mb-0">
+            <small>
+                <i class="bi bi-info-circle me-2"></i>
+                Telegram allows ~50,000 dialogs per account. We maintain a 45,000 limit buffer.
+                When approaching this limit, new keywords will not be added.
+            </small>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Keywords Summary -->
+<div class="card bg-dark border-secondary mb-4">
+    <div class="card-header bg-darker border-secondary">
+        <h6 class="mb-0"><i class="bi bi-key me-2"></i>Keywords Summary</h6>
+    </div>
+    <div class="card-body">
+        <div class="row text-center">
+            <div class="col-md-2">
+                <h5>{{ keyword_stats.total }}</h5>
+                <small class="text-muted">Total Keywords</small>
+            </div>
+            <div class="col-md-2">
+                <h5 class="text-success">{{ keyword_stats.original }}</h5>
+                <small class="text-muted">Original</small>
+            </div>
+            <div class="col-md-2">
+                <h5 class="text-warning">{{ keyword_stats.regenerated }}</h5>
+                <small class="text-muted">Regenerated</small>
+            </div>
+            <div class="col-md-2">
+                <h5 class="text-info">{{ keyword_stats.active }}</h5>
+                <small class="text-muted">Active</small>
+            </div>
+            <div class="col-md-2">
+                <h5 class="text-danger">{{ keyword_stats.exhausted }}</h5>
+                <small class="text-muted">Exhausted</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Active Keywords -->
+<div class="card bg-dark border-secondary mb-4">
+    <div class="card-header bg-darker border-secondary">
+        <h6 class="mb-0"><i class="bi bi-list-check me-2"></i>Active Keywords</h6>
+    </div>
+    <div class="card-body">
+        {% if active_keywords %}
+            <div class="list-group list-group-flush">
+                {% for kw in active_keywords %}
+                <div class="list-group-item bg-dark border-secondary py-2">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="mb-1">
+                                <code>{{ kw.keyword }}</code>
+                                {% if kw.generation_round > 0 %}
+                                    <span class="badge bg-info">Variant #{{ kw.generation_round }}</span>
+                                {% endif %}
+                            </h6>
+                            <small class="text-muted">
+                                Results: {{ kw.results_count }} | 
+                                Last used: {{ kw.last_used.strftime('%Y-%m-%d %H:%M') if kw.last_used else 'Never' }} |
+                                No new: {{ kw.cycles_without_new }} cycles
+                            </small>
+                        </div>
+                        <div class="text-right">
+                            {% if kw.cycles_without_new >= 3 %}
+                                <span class="badge bg-warning">NEEDS REGEN</span>
+                            {% else %}
+                                <span class="badge bg-success">OK</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p class="text-muted">No active keywords. Create some via Business Goal or manually.</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Exhausted Keywords -->
+{% if exhausted_keywords %}
+<div class="card bg-dark border-secondary mb-4">
+    <div class="card-header bg-darker border-secondary">
+        <h6 class="mb-0"><i class="bi bi-exclamation-circle me-2"></i>Exhausted Keywords</h6>
+    </div>
+    <div class="card-body">
+        <div class="alert alert-warning mb-3">
+            <small>
+                These keywords have been deactivated after 3 consecutive cycles without finding new channels.
+                Regenerated variants are already being searched.
+            </small>
+        </div>
+        <div class="list-group list-group-flush">
+            {% for kw in exhausted_keywords %}
+            <div class="list-group-item bg-dark border-secondary py-2">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <h6 class="mb-1">
+                            <code>{{ kw.keyword }}</code>
+                        </h6>
+                        <small class="text-muted">
+                            Results: {{ kw.results_count }} | 
+                            Last used: {{ kw.last_used.strftime('%Y-%m-%d %H:%M') if kw.last_used else 'Never' }} |
+                            Marked exhausted in cycle {{ kw.cycles_without_new }}
+                        </small>
+                    </div>
+                    <span class="badge bg-danger">EXHAUSTED</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- How It Works -->
+<div class="card bg-dark border-secondary">
+    <div class="card-header bg-darker border-secondary">
+        <h6 class="mb-0"><i class="bi bi-lightbulb me-2"></i>How Smart Regeneration Works</h6>
+    </div>
+    <div class="card-body">
+        <ol class="small" style="line-height: 1.8;">
+            <li>Discovery searches Telegram using active keywords every 5 minutes</li>
+            <li>When a keyword doesn't find new channels for 3 consecutive cycles, it's marked as exhausted</li>
+            <li>System automatically generates 3 new keyword variants on the same topic</li>
+            <li>New variants continue searching while original keyword rests</li>
+            <li>Process repeats until we reach the 45,000 channel limit or run out of topic variations</li>
+        </ol>
+        
+        <div class="alert alert-info mt-3 mb-0">
+            <small>
+                <strong>Example:</strong> If "adult dating" exhausts (no new channels for 3 cycles),
+                system generates variants like "dating singles", "hookup chat", "adult meet", etc.
+            </small>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

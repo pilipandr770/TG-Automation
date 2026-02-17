@@ -1,0 +1,154 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Channels — Telegram Automation{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0"><i class="bi bi-broadcast me-2"></i>Discovered Channels</h4>
+</div>
+
+<!-- Filters -->
+<div class="card bg-dark border-secondary mb-4">
+    <div class="card-body py-2">
+        <div class="d-flex align-items-center gap-2">
+            <span class="text-muted me-2">Filter:</span>
+            <a href="{{ url_for('admin.channels') }}"
+               class="btn btn-sm {{ 'btn-primary' if not status_filter else 'btn-outline-secondary' }}">All</a>
+            <a href="{{ url_for('admin.channels', status='found') }}"
+               class="btn btn-sm {{ 'btn-primary' if status_filter == 'found' else 'btn-outline-secondary' }}">Found</a>
+            <a href="{{ url_for('admin.channels', status='joined') }}"
+               class="btn btn-sm {{ 'btn-success' if status_filter == 'joined' else 'btn-outline-secondary' }}">Joined</a>
+            <a href="{{ url_for('admin.channels', status='left') }}"
+               class="btn btn-sm {{ 'btn-warning' if status_filter == 'left' else 'btn-outline-secondary' }}">Left</a>
+            <a href="{{ url_for('admin.channels', status='banned') }}"
+               class="btn btn-sm {{ 'btn-danger' if status_filter == 'banned' else 'btn-outline-secondary' }}">Banned</a>
+        </div>
+    </div>
+</div>
+
+<!-- Manual Join Form -->
+<div class="card bg-dark border-secondary mb-4">
+    <div class="card-header border-secondary">
+        <h6 class="mb-0">Manually Add Channel</h6>
+    </div>
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('admin.join_channel_manual') }}" class="d-flex gap-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="text" 
+                   name="channel_input" 
+                   class="form-control bg-secondary text-white border-secondary" 
+                   placeholder="Channel username (@username), link (t.me/...), or ID"
+                   required>
+            <button type="submit" class="btn btn-success">Join & Add</button>
+        </form>
+        <small class="text-muted d-block mt-2">Examples: @mychannel, t.me/mychannel, mychannel, or 123456789</small>
+    </div>
+</div>
+
+<!-- Channels Table -->
+<div class="card bg-dark border-secondary">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-dark table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Title</th>
+                        <th>Username</th>
+                        <th>Type</th>
+                        <th>Subscribers</th>
+                        <th>Comments</th>
+                        <th>Score</th>
+                        <th>Status</th>
+                        <th>Joined</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ch in channels.items %}
+                    <tr>
+                        <td class="fw-semibold">{{ ch.title|truncate(30) }}</td>
+                        <td>
+                            {% if ch.username %}
+                                <a href="https://t.me/{{ ch.username }}" target="_blank" class="text-info text-decoration-none">
+                                    @{{ ch.username }}
+                                </a>
+                            {% else %}
+                                <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td><span class="badge bg-secondary">{{ ch.channel_type or 'channel' }}</span></td>
+                        <td>{{ ch.subscriber_count or '—' }}</td>
+                        <td>
+                            {% if ch.has_comments %}
+                                <i class="bi bi-check-circle text-success"></i>
+                            {% else %}
+                                <i class="bi bi-x-circle text-muted"></i>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if ch.topic_match_score is not none %}
+                                <span class="badge bg-{{ 'success' if ch.topic_match_score >= 0.7 else 'warning' if ch.topic_match_score >= 0.4 else 'secondary' }}">
+                                    {{ '%.2f'|format(ch.topic_match_score) }}
+                                </span>
+                            {% else %}
+                                <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="badge bg-{{ 'success' if ch.status == 'joined' else 'info' if ch.status == 'found' else 'warning' if ch.status == 'left' else 'danger' }}">
+                                {{ ch.status }}
+                            </span>
+                        </td>
+                        <td>
+                            <small class="text-muted">
+                                {{ ch.joined_at.strftime('%Y-%m-%d') if ch.joined_at else '—' }}
+                            </small>
+                        </td>
+                        <td>
+                            <form method="POST" action="{{ url_for('admin.blacklist_channel', id=ch.id) }}" class="d-inline"
+                                  onsubmit="return confirm('Blacklist this channel?')">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Blacklist">
+                                    <i class="bi bi-slash-circle"></i>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="9" class="text-center text-muted py-4">No channels found</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Pagination -->
+{% if channels.pages > 1 %}
+<nav class="mt-3">
+    <ul class="pagination pagination-sm justify-content-center">
+        <li class="page-item {{ 'disabled' if not channels.has_prev }}">
+            <a class="page-link" href="{{ url_for('admin.channels', page=channels.prev_num, status=status_filter) }}">
+                <i class="bi bi-chevron-left"></i>
+            </a>
+        </li>
+        {% for p in channels.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+            {% if p %}
+                <li class="page-item {{ 'active' if p == channels.page }}">
+                    <a class="page-link" href="{{ url_for('admin.channels', page=p, status=status_filter) }}">{{ p }}</a>
+                </li>
+            {% else %}
+                <li class="page-item disabled"><span class="page-link">...</span></li>
+            {% endif %}
+        {% endfor %}
+        <li class="page-item {{ 'disabled' if not channels.has_next }}">
+            <a class="page-link" href="{{ url_for('admin.channels', page=channels.next_num, status=status_filter) }}">
+                <i class="bi bi-chevron-right"></i>
+            </a>
+        </li>
+    </ul>
+</nav>
+{% endif %}
+{% endblock %}

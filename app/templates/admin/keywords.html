@@ -1,0 +1,114 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Search Keywords — Telegram Automation{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0"><i class="bi bi-search me-2"></i>Search Keywords</h4>
+    <span class="badge bg-secondary fs-6">{{ keywords|length }} keywords</span>
+</div>
+
+<!-- Add Keyword Form -->
+<div class="card bg-dark border-secondary mb-4">
+    <div class="card-header border-secondary">
+        <h6 class="mb-0"><i class="bi bi-plus-circle me-2"></i>Add Keyword</h6>
+    </div>
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('admin.keywords') }}" class="row g-3 align-items-end">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="col-md-4">
+                <label class="form-label">Keyword</label>
+                <input type="text" name="keyword" class="form-control bg-dark text-light border-secondary"
+                       placeholder="e.g. crypto trading" required>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Language</label>
+                <select name="language" class="form-select bg-dark text-light border-secondary">
+                    <option value="en">English</option>
+                    <option value="ar">Arabic</option>
+                    <option value="zh">Chinese</option>
+                    <option value="ru">Russian</option>
+                    <option value="de">German</option>
+                    <option value="fr">French</option>
+                    <option value="es">Spanish</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Priority</label>
+                <input type="number" name="priority" class="form-control bg-dark text-light border-secondary"
+                       value="5" min="1" max="10">
+            </div>
+            <div class="col-md-3">
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-plus-lg me-1"></i> Add Keyword
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Keywords Table -->
+<div class="card bg-dark border-secondary">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-dark table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Keyword</th>
+                        <th>Language</th>
+                        <th>Active</th>
+                        <th>Priority</th>
+                        <th>Results</th>
+                        <th>Last Used</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for kw in keywords %}
+                    <tr>
+                        <td class="fw-semibold">{{ kw.keyword }}</td>
+                        <td><span class="badge bg-secondary">{{ kw.language|upper }}</span></td>
+                        <td>
+                            {% if kw.active %}
+                                <span class="badge bg-success">Active</span>
+                            {% else %}
+                                <span class="badge bg-danger">Inactive</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ kw.priority }}</td>
+                        <td>{{ kw.results_count or 0 }}</td>
+                        <td>
+                            <small class="text-muted">
+                                {{ kw.last_used.strftime('%Y-%m-%d %H:%M') if kw.last_used else 'Never' }}
+                            </small>
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <form method="POST" action="{{ url_for('admin.toggle_keyword', id=kw.id) }}" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-outline-{{ 'warning' if kw.active else 'success' }}"
+                                            title="{{ 'Deactivate' if kw.active else 'Activate' }}">
+                                        <i class="bi bi-{{ 'pause' if kw.active else 'play' }}"></i>
+                                    </button>
+                                </form>
+                                <form method="POST" action="{{ url_for('admin.delete_keyword', id=kw.id) }}" class="d-inline"
+                                      onsubmit="return confirm('Delete this keyword?')">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-outline-danger" title="Delete">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" class="text-center text-muted py-4">No keywords added yet</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

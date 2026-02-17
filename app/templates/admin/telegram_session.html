@@ -1,0 +1,103 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Telegram Session — Telegram Automation{% endblock %}
+
+{% block content %}
+<h4 class="mb-4"><i class="bi bi-plug me-2"></i>Telegram Session</h4>
+
+<!-- Session Status -->
+<div class="card bg-dark border-secondary mb-4">
+    <div class="card-body">
+        <h6 class="text-muted mb-3">Connection Status</h6>
+        {% if session %}
+        <div class="d-flex align-items-center mb-3">
+            <div class="stat-icon {{ 'bg-success' if session.is_active else 'bg-danger' }} bg-opacity-25 {{ 'text-success' if session.is_active else 'text-danger' }} me-3">
+                <i class="bi bi-{{ 'check-circle' if session.is_active else 'x-circle' }}"></i>
+            </div>
+            <div>
+                <h5 class="mb-0">{{ 'Connected' if session.is_active else 'Disconnected' }}</h5>
+                <small class="text-muted">
+                    Last connected: {{ session.last_connected.strftime('%Y-%m-%d %H:%M') if session.last_connected else 'Never' }}
+                </small>
+            </div>
+        </div>
+        <div class="row g-3">
+            <div class="col-md-4">
+                <small class="text-muted d-block">API ID</small>
+                <code>{{ session.api_id if session.api_id else 'Not set' }}</code>
+            </div>
+            <div class="col-md-4">
+                <small class="text-muted d-block">Phone Number</small>
+                <code>{{ session.phone_number if session.phone_number else 'Not set' }}</code>
+            </div>
+            <div class="col-md-4">
+                <small class="text-muted d-block">Session</small>
+                <code>{{ 'Active' if session.session_string else 'No session' }}</code>
+            </div>
+        </div>
+        {% else %}
+        <div class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle me-2"></i>No session configured. Please set up credentials below.
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Credentials Form -->
+<div class="card bg-dark border-secondary mb-4">
+    <div class="card-header border-secondary">
+        <h6 class="mb-0">Telegram Credentials</h6>
+    </div>
+    <div class="card-body">
+        <form method="POST">
+            <input type="hidden" name="action" value="save_credentials">
+            <div class="alert alert-info small">
+                <i class="bi bi-info-circle me-2"></i>Get your API credentials from <a href="https://my.telegram.org" target="_blank" class="alert-link">my.telegram.org</a>
+            </div>
+            <div class="row g-3 mb-3">
+                <div class="col-md-4">
+                    <label class="form-label">API ID</label>
+                    <input type="text" name="api_id" value="{{ session.api_id if session else '' }}"
+                           class="form-control bg-dark text-light border-secondary" placeholder="12345678">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">API Hash</label>
+                    <input type="text" name="api_hash" value="{{ session.api_hash if session else '' }}"
+                           class="form-control bg-dark text-light border-secondary" placeholder="abcdef1234567890">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Phone Number</label>
+                    <input type="tel" name="phone" value="{{ session.phone_number if session else '' }}"
+                           class="form-control bg-dark text-light border-secondary" placeholder="+1234567890">
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">
+                <i class="bi bi-save me-1"></i> Save Credentials
+            </button>
+        </form>
+    </div>
+</div>
+
+<!-- Session String (Advanced) -->
+<div class="card bg-dark border-secondary">
+    <div class="card-header border-secondary">
+        <h6 class="mb-0">Session String (Advanced)</h6>
+    </div>
+    <div class="card-body">
+        <form method="POST">
+            <input type="hidden" name="action" value="save_session_string">
+            <div class="alert alert-warning small">
+                <i class="bi bi-exclamation-triangle me-2"></i>Only use this if you have an existing Telethon StringSession. Otherwise, leave empty and authenticate via the telethon_runner.
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Session String</label>
+                <textarea name="session_string" rows="3" class="form-control bg-dark text-light border-secondary font-monospace small"
+                          placeholder="1AQAAA...">{{ session.session_string if session and session.session_string else '' }}</textarea>
+            </div>
+            <button type="submit" class="btn btn-secondary">
+                <i class="bi bi-save me-1"></i> Save Session String
+            </button>
+        </form>
+    </div>
+</div>
+{% endblock %}

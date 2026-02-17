@@ -1,0 +1,105 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Conversations — Telegram Automation{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0"><i class="bi bi-chat-dots me-2"></i>Conversations</h4>
+</div>
+
+<!-- Conversations Table -->
+<div class="card bg-dark border-secondary">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-dark table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>User</th>
+                        <th>Messages</th>
+                        <th>Stars Paid</th>
+                        <th>Language</th>
+                        <th>Status</th>
+                        <th>Last Message</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for conv in conversations.items %}
+                    <tr>
+                        <td>
+                            <div class="fw-semibold">
+                                {{ conv.user_first_name or '' }}
+                                {% if conv.username %}
+                                    <small class="text-muted">@{{ conv.username }}</small>
+                                {% endif %}
+                            </div>
+                            <small class="text-muted">ID: {{ conv.telegram_user_id }}</small>
+                        </td>
+                        <td>
+                            <span class="badge bg-secondary">{{ conv.total_messages or 0 }}</span>
+                        </td>
+                        <td>
+                            {% if conv.total_stars_paid %}
+                                <span class="text-warning">
+                                    <i class="bi bi-star-fill me-1"></i>{{ conv.total_stars_paid }}
+                                </span>
+                            {% else %}
+                                <span class="text-muted">0</span>
+                            {% endif %}
+                        </td>
+                        <td><span class="badge bg-secondary">{{ conv.language|upper if conv.language else '—' }}</span></td>
+                        <td>
+                            <span class="badge bg-{{ 'success' if conv.status == 'active' else 'warning' if conv.status == 'paused' else 'danger' if conv.status == 'blocked' else 'secondary' }}">
+                                {{ conv.status }}
+                            </span>
+                        </td>
+                        <td>
+                            <small class="text-muted">
+                                {{ conv.last_message_at.strftime('%Y-%m-%d %H:%M') if conv.last_message_at else '—' }}
+                            </small>
+                        </td>
+                        <td>
+                            <a href="{{ url_for('admin.conversation_detail', id=conv.id) }}"
+                               class="btn btn-sm btn-outline-primary" title="View Messages">
+                                <i class="bi bi-eye"></i>
+                            </a>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" class="text-center text-muted py-4">No conversations yet</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Pagination -->
+{% if conversations.pages > 1 %}
+<nav class="mt-3">
+    <ul class="pagination pagination-sm justify-content-center">
+        <li class="page-item {{ 'disabled' if not conversations.has_prev }}">
+            <a class="page-link" href="{{ url_for('admin.conversations', page=conversations.prev_num) }}">
+                <i class="bi bi-chevron-left"></i>
+            </a>
+        </li>
+        {% for p in conversations.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+            {% if p %}
+                <li class="page-item {{ 'active' if p == conversations.page }}">
+                    <a class="page-link" href="{{ url_for('admin.conversations', page=p) }}">{{ p }}</a>
+                </li>
+            {% else %}
+                <li class="page-item disabled"><span class="page-link">...</span></li>
+            {% endif %}
+        {% endfor %}
+        <li class="page-item {{ 'disabled' if not conversations.has_next }}">
+            <a class="page-link" href="{{ url_for('admin.conversations', page=conversations.next_num) }}">
+                <i class="bi bi-chevron-right"></i>
+            </a>
+        </li>
+    </ul>
+</nav>
+{% endif %}
+{% endblock %}
