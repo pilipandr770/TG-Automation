@@ -26,21 +26,55 @@ class AppConfig(db.Model):
 
     @classmethod
     def get(cls, key, default=None):
-        config = cls.query.filter_by(key=key).first()
-        return config.value if config else default
+        try:
+            config = cls.query.filter_by(key=key).first()
+            return config.value if config else default
+        except Exception as e:
+            # Handle pending rollback errors - rollback and retry
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f'Error reading config {key}: {e}, attempting rollback')
+            db.session.rollback()
+            try:
+                config = cls.query.filter_by(key=key).first()
+                return config.value if config else default
+            except:
+                return default
 
     @classmethod
     def set(cls, key, value, description=None):
-        config = cls.query.filter_by(key=key).first()
-        if config:
-            config.value = value
-            if description:
-                config.description = description
-        else:
-            config = cls(key=key, value=value, description=description)
-            db.session.add(config)
-        db.session.commit()
-        return config
+        try:
+            config = cls.query.filter_by(key=key).first()
+            if config:
+                config.value = value
+                if description:
+                    config.description = description
+            else:
+                config = cls(key=key, value=value, description=description)
+                db.session.add(config)
+            db.session.commit()
+            return config
+        except Exception as e:
+            # Handle constraint violations and other errors
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f'Error setting config {key}: {e}, attempting rollback')
+            db.session.rollback()
+            try:
+                config = cls.query.filter_by(key=key).first()
+                if config:
+                    config.value = value
+                    if description:
+                        config.description = description
+                else:
+                    config = cls(key=key, value=value, description=description)
+                    db.session.add(config)
+                db.session.commit()
+                return config
+            except Exception as retry_error:
+                logger.error(f'Failed to set config {key} even after rollback: {retry_error}')
+                db.session.rollback()
+                return None
 
 
 class TelegramSession(db.Model):
