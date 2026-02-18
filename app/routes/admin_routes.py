@@ -965,6 +965,11 @@ def business_goal():
                         )
                         db.session.add(kw)
                     
+                    # CRITICAL: Set topic context for channel evaluation
+                    # This allows discovery_service to intelligently filter channels
+                    AppConfig.set('discovery_topic_context', goal_description,
+                                 'Topic context for channel discovery evaluation')
+                    
                     db.session.commit()
                     
                     flash(f'✓ Сгенерировано {len(keywords_list)} ключевых слов для поиска!', 'success')

@@ -191,6 +191,7 @@ class Contact(db.Model):
     status = db.Column(db.String(20), default='identified')  # identified, invited, responded, blocked
     invitation_sent = db.Column(db.Boolean, default=False)
     invitation_sent_at = db.Column(db.DateTime)
+    is_valid = db.Column(db.Boolean, default=True)  # False if contact not found in Telegram
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

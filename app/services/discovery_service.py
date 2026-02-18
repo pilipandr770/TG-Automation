@@ -73,10 +73,10 @@ class DiscoveryService:
     # ── core methods ─────────────────────────────────────────────────────
 
     async def search_channels(self, keyword: str) -> list:
-        """Search for NEW channels by keyword using Telegram SearchRequest API.
+        """Search for NEW channels by keyword using Telegram SearchGlobal API.
         
-        Unlike iter_dialogs, this searches across ALL of Telegram, not just
-        your existing chats. Returns up to 50 channels matching the keyword.
+        Uses global search to find channels across all of Telegram.
+        Returns up to 50 channels matching the keyword.
         """
         client = await self._client_manager.get_client()
         if client is None:
@@ -92,22 +92,34 @@ class DiscoveryService:
         try:
             logger.info('[SEARCH] Searching for NEW channels matching "%s"', keyword)
             
-            # Method 1: Use SearchRequest to find channels by title
+            # Method 1: Use SearchGlobal to find channels by keyword
             try:
-                request = functions.contacts.SearchRequest(q=keyword, limit=50)
+                # SearchGlobal searches across all of Telegram for channels
+                request = functions.messages.SearchGlobalRequest(
+                    q=keyword,
+                    filter=types.InputMessagesFilterEmpty(),  # Required parameter
+                    min_date=None,   # Required parameter
+                    max_date=None,   # Required parameter
+                    limit=50,
+                    offset_rate=0,
+                    offset_peer='self',
+                    offset_id=0,
+                    broadcasts_only=True,  # Search channels, not groups
+                )
                 result = await client(request)
                 
-                if result and result.chats:
+                if result and hasattr(result, 'chats') and result.chats:
                     for chat in result.chats:
-                        if isinstance(chat, types.Channel):
-                            if chat.id not in channels_found:
-                                channels_found[chat.id] = chat
-                                title = getattr(chat, 'title', 'Unknown')
-                                logger.debug('[SEARCH] SearchRequest found: %s', title)
+                        # We want channels
+                        is_channel = isinstance(chat, types.Channel)
+                        if is_channel and chat.id not in channels_found:
+                            channels_found[chat.id] = chat
+                            title = getattr(chat, 'title', 'Unknown')
+                            logger.debug('[SEARCH] SearchGlobal found: %s', title)
                 
-                logger.info('[SEARCH] SearchRequest found %d channels for "%s"', len(channels_found), keyword)
+                logger.info('[SEARCH] SearchGlobal found %d channels for "%s"', len(channels_found), keyword)
             except Exception as e:
-                logger.debug('[SEARCH] SearchRequest error: %s', str(e)[:100])
+                logger.debug('[SEARCH] SearchGlobal error: %s', str(e)[:100])
             
             # Method 2: Try as username directly (e.g., "photography" -> @photography)
             try:

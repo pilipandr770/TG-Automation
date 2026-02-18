@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 # Each tuple: (max_count, window_seconds)
 DEFAULT_LIMITS: dict[str, list[tuple[int, int]]] = {
     'search': [
-        (50, 60),       # 50 per minute (much more lenient for local testing)
-        (200, 3600),    # 200 per hour
+        (200, 60),      # 200 per minute (85+ keywords need this)
+        (500, 3600),    # 500 per hour
     ],
     'join_channel': [
         (20, 3600),     # 20 per hour (increased for testing)

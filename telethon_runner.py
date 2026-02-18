@@ -145,7 +145,9 @@ async def main():
 
         discovery = get_discovery_service()
         audience = get_audience_service()
+        print(f'[TELETHON_RUNNER] About to initialize invitation service...', flush=True)
         invitation = get_invitation_service(client_mgr, rate_limiter)
+        print(f'[TELETHON_RUNNER] Invitation service initialized: {invitation}', flush=True)
         publisher = get_publisher_service(client_mgr, openai_service, content_fetcher)
         conversation = get_conversation_service(client_mgr, openai_service)
 
@@ -202,9 +204,12 @@ async def main():
         ))
 
         # Module 4: Continuous invitation sending
-        tasks.append(asyncio.create_task(
+        print(f'[TELETHON_RUNNER] Creating invitation task...', flush=True)
+        invitation_task = asyncio.create_task(
             run_with_app_context(app, invitation.run_forever)
-        ))
+        )
+        print(f'[TELETHON_RUNNER] Invitation task created: {invitation_task}', flush=True)
+        tasks.append(invitation_task)
 
         # Heartbeat
         if redis_client:
@@ -217,13 +222,39 @@ async def main():
 
         logger.info(f'Started {len(tasks)} background tasks. Running...')
 
-        # Wait for shutdown signal
-        await shutdown_event.wait()
+        # Start Telethon client event loop to listen for incoming messages
+        # CRITICAL: client.run_until_disconnected() must run to process updates
+        logger.info('Starting Telethon event listener for incoming message handling...')
+        
+        async def client_event_loop():
+            """Wrapper to ensure client properly listens for updates."""
+            try:
+                logger.info('Telethon event listener started - waiting for messages...')
+                await client.run_until_disconnected()
+            except Exception as e:
+                logger.error(f'Telethon event loop error: {e}', exc_info=True)
+        
+        client_task = asyncio.create_task(client_event_loop())
+        tasks.append(client_task)
+
+        # Wait for shutdown signal or any task to fail
+        done, pending = await asyncio.wait(
+            tasks + [asyncio.create_task(shutdown_event.wait())],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+        
+        # Check if any task failed
+        for task in done:
+            if task is not shutdown_event.wait():
+                exc = task.exception()
+                if exc:
+                    logger.error(f'Task failed: {exc}')
 
         # Cleanup
         logger.info('Shutting down tasks...')
         for task in tasks:
-            task.cancel()
+            if not task.done():
+                task.cancel()
 
         await asyncio.gather(*tasks, return_exceptions=True)
 

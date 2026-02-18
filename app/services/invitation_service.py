@@ -17,8 +17,8 @@ class InvitationService:
         self.rate_limiter = rate_limiter
 
     async def get_pending_contacts(self, limit=10):
-        """Get contacts that haven't been invited yet."""
-        contacts = Contact.query.filter_by(invitation_sent=False).limit(limit).all()
+        """Get contacts that haven't been invited yet and are valid."""
+        contacts = Contact.query.filter_by(invitation_sent=False, is_valid=True).limit(limit).all()
         return contacts
 
     async def select_template(self):
@@ -110,8 +110,28 @@ class InvitationService:
             return False
             
         except Exception as e:
+            error_str = str(e)
             logger.error(f'Failed to send invitation to {contact.telegram_id}: {e}')
             db.session.rollback()
+            
+            # Check if contact doesn't exist in Telegram
+            if 'Could not find the input entity' in error_str or 'PeerUser' in error_str:
+                logger.warning(f'Contact {contact.id} (ID: {contact.telegram_id}) not found in Telegram - marking as invalid')
+                contact.is_valid = False
+                contact.invitation_sent = True  # Mark as sent so we skip it in future
+                try:
+                    db.session.commit()
+                except:
+                    db.session.rollback()
+            
+            # Check if rate limited - skip this contact temporarily
+            elif 'Too many requests' in error_str:
+                logger.warning(f'Contact {contact.id} rate-limited by Telegram - marking as sent to skip')
+                contact.invitation_sent = True  # Mark as sent so we skip it for now
+                try:
+                    db.session.commit()
+                except:
+                    db.session.rollback()
             
             # Try to log failed attempt - check if log already exists
             try:
@@ -195,6 +215,7 @@ class InvitationService:
 
     async def run_forever(self) -> None:
         """Run invitation sending cycles in an infinite loop."""
+        print('[INVITATIONS] *** Starting invitation service - THIS SHOULD BE VISIBLE ***', flush=True)
         logger.info('[INVITATIONS] Starting infinite invitation loop')
         cycle_count = 0
         
