@@ -12,6 +12,10 @@ Usage:
     python run.py --web-only   # Run only Flask
     python run.py --worker-only # Run only Telethon
 """
+# Load environment variables FIRST, before any Flask/app imports
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 import sys
 import argparse
@@ -132,16 +136,16 @@ class AppManager:
             time.sleep(2)  # Give worker time to initialize
         
         logger.info('=' * 70)
-        logger.info('✓ APPLICATION STARTED')
+        logger.info('[OK] APPLICATION STARTED')
         logger.info('=' * 70)
         
         if not self.web_only:
-            logger.info('📱 Telegram Automation Admin Panel:')
+            logger.info('[TELEGRAM] Telegram Automation Admin Panel:')
             logger.info('   Web: http://localhost:5000/admin')
             logger.info('   Login: http://localhost:5000/auth/login')
         
         if not self.worker_only:
-            logger.info('🔄 Background Services:')
+            logger.info('[SERVICES] Background Services:')
             logger.info('   - Telegram Client (Telethon)')
             logger.info('   - Discovery Module (finds channels)')
             logger.info('   - Audience Scanner (scans members)')
@@ -208,7 +212,7 @@ def check_database():
         with app.app_context():
             # Try to query users table
             User.query.first()
-            logger.info('✓ Database initialized and accessible')
+            logger.info('[OK] Database initialized and accessible')
             return True
     except Exception as e:
         logger.warning(f'Database check failed: {e}')
@@ -269,7 +273,7 @@ Examples:
     logger.info('')
     
     if args.check:
-        logger.info('✓ All checks passed!')
+        logger.info('[OK] All checks passed!')
         sys.exit(0)
     
     # Start application
