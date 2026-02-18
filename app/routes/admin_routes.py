@@ -696,7 +696,12 @@ def transactions():
 def instructions():
     """Edit AI chatbot instructions for private messages and channel comments."""
     if request.method == 'POST':
+        # Debug: Log what we received
+        logger.info(f'instructions POST received. Form keys: {list(request.form.keys())}')
+        logger.info(f'instructions POST csrf_token in form: {"csrf_token" in request.form}')
+        
         action = request.form.get('action', '')
+        logger.info(f'instructions: action="{action}"')
         
         # Default instructions
         default_dm = 'You are a helpful assistant for our Telegram channel. Be friendly, informative, and respond in the same language the user is using. Keep responses concise and engaging.'

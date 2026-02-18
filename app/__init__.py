@@ -1,9 +1,10 @@
 import os
 import click
+import logging
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager
-from flask_wtf.csrf import CSRFProtect
+from flask_wtf.csrf import CSRFProtect, CSRFError
 from werkzeug.security import generate_password_hash
 
 db = SQLAlchemy()
@@ -11,6 +12,8 @@ login_manager = LoginManager()
 login_manager.login_view = 'auth.login'
 login_manager.login_message = 'Please log in to access this page.'
 csrf = CSRFProtect()
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(config_name=None):
@@ -45,6 +48,19 @@ def create_app(config_name=None):
     app.register_blueprint(auth_bp, url_prefix='/auth')
     app.register_blueprint(admin_bp, url_prefix='/admin')
     app.register_blueprint(api_bp, url_prefix='/api')
+
+    # CSRF Error Handler
+    @app.errorhandler(CSRFError)
+    def handle_csrf_error(e):
+        """Handle CSRF token errors."""
+        from flask import request
+        logger.error(f'CSRF Error: {e.description}')
+        logger.error(f'Request path: {request.path}')
+        logger.error(f'Request method: {request.method}')
+        if request.method == 'POST':
+            logger.error(f'Form keys: {list(request.form.keys())}')
+            logger.error(f'CSRF token in form: {"csrf_token" in request.form}')
+        return {'error': 'CSRF token validation failed', 'details': str(e.description)}, 400
 
     # Root redirect to admin
     @app.route('/')
