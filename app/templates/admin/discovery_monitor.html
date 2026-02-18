@@ -68,7 +68,7 @@
                     {% set usage_pct = limit_status.usage_percent %}
                     {% set color = 'success' if usage_pct < 50 else 'warning' if usage_pct < 80 else 'danger' %}
                     <div class="progress-bar bg-{{ color }}" role="progressbar" 
-                         style="width: {{ usage_pct }}%;text-align:center;color:#000" 
+                         style="width: {{ usage_pct }}%; text-align: center; color: #000;" 
                          aria-valuenow="{{ usage_pct }}" aria-valuemin="0" aria-valuemax="100">
                         {{ usage_pct }}%
                     </div>
