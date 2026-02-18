@@ -13,7 +13,7 @@ from app.models import (
     SearchKeyword, DiscoveredChannel, AudienceCriteria, Contact,
     InvitationTemplate, InvitationLog, ContentSource, PublishedPost,
     PaidContent, Conversation, ConversationMessage, StarTransaction,
-    AppConfig, TelegramSession, TaskLog, OpenAIUsageLog
+    AppConfig, TelegramSession, TaskLog, OpenAIUsageLog, PostMedia
 )
 
 admin_bp = Blueprint('admin', __name__, template_folder='../templates')
@@ -513,13 +513,80 @@ def delete_source(id):
 
 # ─── Module 4: Published Posts ────────────────────────────────────────────────
 
-@admin_bp.route('/published-posts')
+@admin_bp.route('/published-posts', methods=['GET', 'POST'])
 @login_required
 def published_posts():
+    if request.method == 'POST':
+        # Create new post
+        title = request.form.get('title', '').strip()
+        content = request.form.get('content', '').strip()
+        channel = request.form.get('channel', AppConfig.get('target_channel', '')).strip()
+        scheduled_at_str = request.form.get('scheduled_at', '')
+        language = request.form.get('language', 'en')
+        
+        if not title or not content or not channel:
+            flash('Title, content, and channel are required.', 'error')
+            return redirect(url_for('admin.published_posts'))
+        
+        # Parse scheduled time if provided
+        scheduled_at = None
+        if scheduled_at_str:
+            try:
+                from datetime import datetime as dt
+                scheduled_at = dt.fromisoformat(scheduled_at_str)
+            except:
+                pass
+        
+        # Create post record
+        post = PublishedPost(
+            source_title=title,
+            rewritten_content=content,
+            telegram_channel=channel,
+            language=language,
+            status='scheduled' if scheduled_at else 'published',
+            scheduled_at=scheduled_at,
+            published_at=None if scheduled_at else datetime.utcnow()
+        )
+        db.session.add(post)
+        db.session.flush()  # Get the post ID
+        
+        # Handle media files (photos/videos)
+        media_files = request.files.getlist('media_files')
+        if media_files:
+            import secrets
+            for idx, file in enumerate(media_files):
+                if file and file.filename:
+                    # Save file
+                    ext = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else 'jpg'
+                    safe_filename = f"post_{post.id}_{secrets.token_hex(4)}.{ext}"
+                    filepath = os.path.join('app/static/uploads', safe_filename)
+                    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                    file.save(filepath)
+                    
+                    # Save media record
+                    media_type = 'photo' if ext in ['jpg', 'jpeg', 'png', 'gif'] else 'video'
+                    media = PostMedia(
+                        published_post_id=post.id,
+                        media_type=media_type,
+                        file_path=safe_filename,
+                        file_size=len(file.read()),
+                        order=idx
+                    )
+                    file.seek(0)
+                    db.session.add(media)
+        
+        db.session.commit()
+        
+        status_msg = 'scheduled' if scheduled_at else 'created'
+        flash(f'Post {status_msg} successfully.', 'success')
+        return redirect(url_for('admin.published_posts'))
+    
     page = request.args.get('page', 1, type=int)
     posts = PublishedPost.query.order_by(PublishedPost.created_at.desc()).paginate(
         page=page, per_page=25, error_out=False)
-    return render_template('admin/published_posts.html', posts=posts)
+    
+    target_channel = AppConfig.get('target_channel', '')
+    return render_template('admin/published_posts.html', posts=posts, target_channel=target_channel)
 
 
 # ─── Module 5: Paid Content ──────────────────────────────────────────────────

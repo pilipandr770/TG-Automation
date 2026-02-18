@@ -206,6 +206,20 @@ class PublishedPost(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class PostMedia(db.Model):
+    """Store images/videos for posts"""
+    __tablename__ = 'post_media'
+    id = db.Column(db.Integer, primary_key=True)
+    published_post_id = db.Column(db.Integer, db.ForeignKey('published_posts.id'))
+    published_post = db.relationship('PublishedPost', backref='media_files')
+    media_type = db.Column(db.String(20), default='photo')  # photo, video, animation
+    file_path = db.Column(db.String(500), nullable=False)  # relative path
+    file_size = db.Column(db.Integer)  # bytes
+    caption = db.Column(db.String(255))  # caption for media
+    order = db.Column(db.Integer, default=0)  # Order in album
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 # ─── Module 5: Conversations & Payments ───────────────────────────────────────
 
 class PaidContent(db.Model):
