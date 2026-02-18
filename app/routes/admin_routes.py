@@ -698,21 +698,34 @@ def instructions():
     if request.method == 'POST':
         action = request.form.get('action', '')
         
+        # Default instructions
+        default_dm = 'You are a helpful assistant for our Telegram channel. Be friendly, informative, and respond in the same language the user is using. Keep responses concise and engaging.'
+        default_channel = 'You are responding to a paid comment in the Telegram channel. Provide expert, detailed responses that justify why the user paid for premium support. Be professional and thorough.'
+        
         # Handle DM Instruction
-        if 'dm' in action or not action:
-            dm_instr = request.form.get('dm_instruction', '')
+        if action == 'save_dm':
+            dm_instr = request.form.get('dm_instruction', '').strip()
             if dm_instr:
                 AppConfig.set('openai_prompt_conversation', dm_instr,
                              'Instructions for AI responses to private messages')
+                flash('DM instruction saved successfully.', 'success')
+        elif action == 'reset_dm':
+            AppConfig.set('openai_prompt_conversation', default_dm,
+                         'Instructions for AI responses to private messages')
+            flash('DM instruction reset to default.', 'info')
         
         # Handle Channel Instruction
-        if 'channel' in action or not action:
-            channel_instr = request.form.get('channel_instruction', '')
+        elif action == 'save_channel':
+            channel_instr = request.form.get('channel_instruction', '').strip()
             if channel_instr:
                 AppConfig.set('openai_prompt_channel_comments', channel_instr,
                              'Instructions for AI responses to paid channel comments')
+                flash('Channel comment instruction saved successfully.', 'success')
+        elif action == 'reset_channel':
+            AppConfig.set('openai_prompt_channel_comments', default_channel,
+                         'Instructions for AI responses to paid channel comments')
+            flash('Channel comment instruction reset to default.', 'info')
         
-        flash('Chatbot instructions updated successfully.', 'success')
         return redirect(url_for('admin.instructions'))
     
     # Get current instructions or defaults

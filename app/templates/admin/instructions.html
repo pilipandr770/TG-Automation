@@ -53,6 +53,7 @@
                 </div>
                 <div class="card-body">
                     <form method="POST" action="{{  url_for('admin.instructions') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <div class="form-group mb-3">
                             <label for="dm_instruction">System Instruction</label>
                             <textarea class="form-control" id="dm_instruction" name="dm_instruction" 
@@ -130,6 +131,7 @@ Be helpful without over-explaining. Acknowledge their question.</code></pre>
                     </div>
 
                     <form method="POST" action="{{ url_for('admin.instructions') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <div class="form-group mb-3">
                             <label for="channel_instruction">System Instruction</label>
                             <textarea class="form-control" id="channel_instruction" name="channel_instruction" 
