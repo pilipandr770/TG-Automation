@@ -121,10 +121,15 @@ class ConversationService:
     async def handle_new_message(self, event):
         """Handle incoming private messages (text and voice)."""
         try:
+            # Log incoming message
+            logger.info(f'[MESSAGE] Incoming message event received: {event}')
+            
             sender = await event.get_sender()
             telegram_user_id = sender.id
             username = sender.username
             first_name = sender.first_name
+            
+            logger.info(f'[MESSAGE] From user {telegram_user_id} ({username}, {first_name})')
 
             # Get or create conversation
             conv = self.get_or_create_conversation(telegram_user_id, username, first_name)
@@ -453,9 +458,16 @@ class ConversationService:
 
         @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
         async def new_message_handler(event):
-            await self.handle_new_message(event)
+            logger.info(f'[HANDLER] NEW MESSAGE EVENT TRIGGERED!')
+            logger.info(f'[HANDLER] Event class: {event.__class__.__name__}')
+            logger.info(f'[HANDLER] Is private: {event.is_private}')
+            logger.info(f'[HANDLER] Has text: {event.message.text is not None}')
+            try:
+                await self.handle_new_message(event)
+            except Exception as e:
+                logger.error(f'[HANDLER] Error in handle_new_message: {e}', exc_info=True)
 
-        logger.info('Conversation event handlers registered')
+        logger.info('Conversation event handlers registered - listening for private messages')
 
 
 def get_conversation_service(client_manager=None, openai_service=None):
