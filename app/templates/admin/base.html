@@ -99,6 +99,20 @@
                 </a>
             </li>
 
+            <li><div class="sidebar-heading">AI & Prompts</div></li>
+            <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'admin.instructions' %}active{% endif %}"
+                   href="{{ url_for('admin.instructions') }}">
+                    <i class="bi bi-robot"></i> AI Instructions
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'admin.openai_settings' %}active{% endif %}"
+                   href="{{ url_for('admin.openai_settings') }}">
+                    <i class="bi bi-sliders"></i> OpenAI Settings
+                </a>
+            </li>
+
             <li><div class="sidebar-heading">Module 1: Discovery</div></li>
             <li class="nav-item">
                 <a class="nav-link {% if request.endpoint == 'admin.business_goal' %}active{% endif %}"
@@ -110,12 +124,6 @@
                 <a class="nav-link {% if request.endpoint == 'admin.keywords' %}active{% endif %}"
                    href="{{ url_for('admin.keywords') }}">
                     <i class="bi bi-search"></i> Search Keywords
-                </a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link {% if request.endpoint == 'admin.discovery_monitor' %}active{% endif %}"
-                   href="{{ url_for('admin.discovery_monitor') }}">
-                    <i class="bi bi-speedometer2"></i> Discovery Monitor
                 </a>
             </li>
             <li class="nav-item">
@@ -188,18 +196,6 @@
             </li>
 
             <li><div class="sidebar-heading">Settings</div></li>
-            <li class="nav-item">
-                <a class="nav-link {% if request.endpoint == 'admin.instructions' %}active{% endif %}"
-                   href="{{ url_for('admin.instructions') }}">
-                    <i class="bi bi-chat-dots"></i> AI Instructions
-                </a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link {% if request.endpoint == 'admin.openai_settings' %}active{% endif %}"
-                   href="{{ url_for('admin.openai_settings') }}">
-                    <i class="bi bi-robot"></i> OpenAI Settings
-                </a>
-            </li>
             <li class="nav-item">
                 <a class="nav-link {% if request.endpoint == 'admin.telegram_session' %}active{% endif %}"
                    href="{{ url_for('admin.telegram_session') }}">
