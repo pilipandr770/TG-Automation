@@ -622,6 +622,52 @@ def transactions():
     return render_template('admin/transactions.html', transactions=txns)
 
 
+# ─── Settings: Chatbot Instructions ─────────────────────────────────────────
+
+@admin_bp.route('/instructions', methods=['GET', 'POST'])
+@login_required
+def instructions():
+    """Edit AI chatbot instructions for private messages and channel comments."""
+    if request.method == 'POST':
+        action = request.form.get('action', '')
+        
+        # Handle DM Instruction
+        if 'dm' in action or not action:
+            dm_instr = request.form.get('dm_instruction', '')
+            if dm_instr:
+                AppConfig.set('openai_prompt_conversation', dm_instr,
+                             'Instructions for AI responses to private messages')
+        
+        # Handle Channel Instruction
+        if 'channel' in action or not action:
+            channel_instr = request.form.get('channel_instruction', '')
+            if channel_instr:
+                AppConfig.set('openai_prompt_channel_comments', channel_instr,
+                             'Instructions for AI responses to paid channel comments')
+        
+        flash('Chatbot instructions updated successfully.', 'success')
+        return redirect(url_for('admin.instructions'))
+    
+    # Get current instructions or defaults
+    dm_instruction = AppConfig.get('openai_prompt_conversation',
+        'You are a helpful assistant for our Telegram channel. Be friendly, informative, and respond in the same language the user is using. Keep responses concise and engaging.')
+    
+    channel_instruction = AppConfig.get('openai_prompt_channel_comments',
+        'You are responding to a paid comment in the Telegram channel. Provide expert, detailed responses that justify why the user paid for premium support. Be professional and thorough.')
+    
+    # Get conversation stats for template
+    conversation_stats = {
+        'total': Conversation.query.count(),
+        'active': Conversation.query.filter_by(status='active').count(),
+        'messages_total': db.session.query(db.func.count(ConversationMessage.id)).scalar(),
+    }
+    
+    return render_template('admin/instructions.html', 
+                         dm_instruction=dm_instruction,
+                         channel_instruction=channel_instruction,
+                         conversation_stats=conversation_stats)
+
+
 # ─── Settings: OpenAI ────────────────────────────────────────────────────────
 
 @admin_bp.route('/openai-settings', methods=['GET', 'POST'])

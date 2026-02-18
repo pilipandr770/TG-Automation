@@ -213,6 +213,7 @@ class PaidContent(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(255), nullable=False)
     description = db.Column(db.Text)
+    instructions = db.Column(db.Text)  # Optional paid-content specific instructions for AI
     content_type = db.Column(db.String(50))  # photo, video, recipe, document, bundle
     file_path = db.Column(db.String(500))
     thumbnail_path = db.Column(db.String(500))

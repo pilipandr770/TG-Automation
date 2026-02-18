@@ -6,8 +6,9 @@ from telethon import events
 from app import db
 from app.models import (
     Conversation, ConversationMessage, PaidContent,
-    StarTransaction, AppConfig
+    StarTransaction, AppConfig, PublishedPost
 )
+from app.services.prompt_builder import get_prompt_builder
 
 logger = logging.getLogger(__name__)
 
@@ -50,28 +51,23 @@ class ConversationService:
         return history
 
     def _format_context_for_openai(self, conversation, message_history, user_message):
-        """Format conversation context for OpenAI API."""
-        # Build system message with conversation context
-        system_prompt = AppConfig.get('openai_prompt_conversation',
-            'You are a helpful assistant for our Telegram community. Be friendly, informative, and respond in the same language the user is using. Keep responses concise and engaging.')
+        """Format conversation context for OpenAI API via PromptBuilder."""
+        # Build conversation context text
+        context_info = f"User: {conversation.first_name or conversation.username or 'User'} (@{conversation.username or 'unknown'})\n"
+        context_info += f"Conversation messages: {conversation.total_messages}\n"
+        context_info += f"Status: {'Subscriber' if conversation.is_subscriber else 'Visitor'}\n"
+        context_info += f"Language: {conversation.language or 'Unknown'}\n\n"
 
-        # Add context about the user and conversation
-        context_info = f"""
-Context:
-- User: {conversation.first_name or conversation.username or 'User'} (@{conversation.username or 'unknown'})
-- Conversation: {conversation.total_messages} messages total
-- Status: {'Subscriber' if conversation.is_subscriber else 'Visitor'}
-- Language: {conversation.language or 'Unknown'}
-
-Previous messages in this conversation:
-"""
-        
-        # Add recent history
         if message_history:
-            for msg in message_history[-10:]:  # Last 10 messages for context
-                context_info += f"\n{msg['role'].upper()}: {msg['content']}"
-        
-        system_prompt += "\n\n" + context_info
+            context_info += "Previous messages:\n"
+            for msg in message_history[-10:]:
+                context_info += f"{msg['role'].upper()}: {msg['content']}\n"
+
+        pb = get_prompt_builder()
+        system_prompt = pb.build_system_prompt(
+            conversation_context=context_info,
+            user_language=conversation.language,
+        )
 
         return system_prompt
 
@@ -88,10 +84,10 @@ Previous messages in this conversation:
             messages = history.copy()
             messages.append({'role': 'user', 'content': user_message})
 
-            # Use OpenAI chat completion with proper message format
-            result = self.openai_service.chat(
+            # Use OpenAI chat_with_history to include full dialog + system prompt
+            result = self.openai_service.chat_with_history(
                 system_prompt=system_prompt,
-                user_message=user_message,
+                messages=messages,
                 module='conversation'
             )
 
@@ -287,8 +283,43 @@ Previous messages in this conversation:
             conv.last_message_at = datetime.utcnow()
             db.session.commit()
             
-            # Generate AI response
-            response_text = await self.generate_response(conv, user_message_text)
+            # Attempt to detect paid content context (reply to a published post)
+            paid_content = None
+            try:
+                reply_msg = await event.get_reply_message()
+                if reply_msg and getattr(reply_msg, 'id', None):
+                    # Try to find a PublishedPost matching the replied-to message id
+                    published = PublishedPost.query.filter_by(telegram_message_id=reply_msg.id).first()
+                    if published:
+                        # Try to match a PaidContent by title or source_title
+                        paid_content = PaidContent.query.filter(
+                            PaidContent.title.ilike(f"%{(published.source_title or '')[:60]}%")
+                        ).first()
+            except Exception:
+                paid_content = None
+
+            # If we found a paid_content with instructions, build a system prompt including it
+            if paid_content and (paid_content.instructions or AppConfig.get('openai_prompt_channel_comments')):
+                # Build system prompt including paid content instructions
+                pb = get_prompt_builder()
+                history = self.get_conversation_history(conv.id, limit=20)
+                system_prompt = pb.build_system_prompt(
+                    conversation_context='\n'.join([f"{m['role']}: {m['content']}" for m in history[-10:]]),
+                    paid_instructions=paid_content.instructions,
+                    channel_instructions=AppConfig.get('openai_prompt_channel_comments'),
+                    user_language=conv.language,
+                )
+                messages = history.copy()
+                messages.append({'role': 'user', 'content': user_message_text})
+                result = self.openai_service.chat_with_history(
+                    system_prompt=system_prompt,
+                    messages=messages,
+                    module='conversation'
+                )
+                response_text = result.get('content') if result else None
+            else:
+                # Fallback to regular flow
+                response_text = await self.generate_response(conv, user_message_text)
             
             # Reply to the comment (by forwarding or sending in thread)
             try:

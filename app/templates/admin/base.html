@@ -189,6 +189,12 @@
 
             <li><div class="sidebar-heading">Settings</div></li>
             <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'admin.instructions' %}active{% endif %}"
+                   href="{{ url_for('admin.instructions') }}">
+                    <i class="bi bi-chat-dots"></i> AI Instructions
+                </a>
+            </li>
+            <li class="nav-item">
                 <a class="nav-link {% if request.endpoint == 'admin.openai_settings' %}active{% endif %}"
                    href="{{ url_for('admin.openai_settings') }}">
                     <i class="bi bi-robot"></i> OpenAI Settings
