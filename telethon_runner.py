@@ -169,8 +169,15 @@ async def main():
             logger.info(f'Received signal {signum}, shutting down gracefully...')
             shutdown_event.set()
 
-        signal.signal(signal.SIGTERM, handle_shutdown)
-        signal.signal(signal.SIGINT, handle_shutdown)
+        # Only register signal handlers if running in main thread
+        # (signal handlers cannot be registered from background threads)
+        import threading
+        if threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGTERM, handle_shutdown)
+            signal.signal(signal.SIGINT, handle_shutdown)
+            logger.info('Signal handlers registered')
+        else:
+            logger.info('Running in background thread - signal handlers managed by run.py')
 
         # Start background tasks
         tasks = []
