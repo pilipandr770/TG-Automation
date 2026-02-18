@@ -13,6 +13,10 @@ import asyncio
 import logging
 from datetime import datetime
 
+# Load environment variables first, before any other imports
+from dotenv import load_dotenv
+load_dotenv()
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(name)s] %(levelname)s: %(message)s',

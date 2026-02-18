@@ -27,6 +27,17 @@ class AppConfig(db.Model):
     @classmethod
     def get(cls, key, default=None):
         try:
+            # Check if we're in an app context
+            from flask import current_app
+            current_app
+        except RuntimeError:
+            # No app context - need to create one
+            from app import create_app
+            app = create_app()
+            with app.app_context():
+                return cls.get(key, default)
+        
+        try:
             config = cls.query.filter_by(key=key).first()
             return config.value if config else default
         except Exception as e:
@@ -43,6 +54,17 @@ class AppConfig(db.Model):
 
     @classmethod
     def set(cls, key, value, description=None):
+        try:
+            # Check if we're in an app context
+            from flask import current_app
+            current_app
+        except RuntimeError:
+            # No app context - need to create one
+            from app import create_app
+            app = create_app()
+            with app.app_context():
+                return cls.set(key, value, description)
+        
         try:
             config = cls.query.filter_by(key=key).first()
             if config:
