@@ -10,6 +10,12 @@ class Config:
     UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app', 'static', 'uploads')
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB max upload
 
+    # SQLAlchemy engine options
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_pre_ping': True,  # Test connections before using them
+        'pool_recycle': 3600,   # Recycle connections after 1 hour
+    }
+
     # OpenAI
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
     OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
@@ -43,6 +49,14 @@ class ProductionConfig(Config):
         # Ensure psycopg driver is explicitly set (for psycopg2-binary compatibility)
         if uri and uri.startswith('postgresql://') and '+psycopg' not in uri:
             uri = uri.replace('postgresql://', 'postgresql+psycopg://', 1)
+        
+        # Add proper SSL settings to prevent certificate errors (sslmode=prefer allows both SSL and non-SSL)
+        if uri and 'sslmode' not in uri:
+            # Check if URL already has query parameters
+            if '?' in uri:
+                uri += '&sslmode=prefer'
+            else:
+                uri += '?sslmode=prefer'
         
         if uri:
             app.config['SQLALCHEMY_DATABASE_URI'] = uri
