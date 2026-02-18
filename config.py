@@ -38,7 +38,14 @@ class ProductionConfig(Config):
         # Fix Render.com postgres:// → postgresql://
         uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
         if uri and uri.startswith('postgres://'):
-            app.config['SQLALCHEMY_DATABASE_URI'] = uri.replace('postgres://', 'postgresql://', 1)
+            uri = uri.replace('postgres://', 'postgresql://', 1)
+        
+        # Ensure psycopg driver is explicitly set (for psycopg2-binary compatibility)
+        if uri and uri.startswith('postgresql://') and '+psycopg' not in uri:
+            uri = uri.replace('postgresql://', 'postgresql+psycopg://', 1)
+        
+        if uri:
+            app.config['SQLALCHEMY_DATABASE_URI'] = uri
 
 
 config = {

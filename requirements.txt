@@ -4,6 +4,7 @@ Flask-Login==0.6.3
 Flask-WTF==1.2.1
 Werkzeug==3.0.1
 psycopg[binary]==3.3.2
+psycopg2-binary==2.9.9
 python-dotenv==1.0.1
 redis==5.0.7
 rq==1.16.2
