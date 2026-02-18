@@ -8,6 +8,7 @@
 <div class="card bg-dark border-secondary">
     <div class="card-body">
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="row g-4">
                 <div class="col-12">
                     <h6 class="text-muted">Telegram Settings</h6>

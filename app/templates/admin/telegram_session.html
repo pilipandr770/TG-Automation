@@ -50,6 +50,7 @@
     </div>
     <div class="card-body">
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="save_credentials">
             <div class="alert alert-info small">
                 <i class="bi bi-info-circle me-2"></i>Get your API credentials from <a href="https://my.telegram.org" target="_blank" class="alert-link">my.telegram.org</a>
@@ -85,6 +86,7 @@
     </div>
     <div class="card-body">
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="save_session_string">
             <div class="alert alert-warning small">
                 <i class="bi bi-exclamation-triangle me-2"></i>Only use this if you have an existing Telethon StringSession. Otherwise, leave empty and authenticate via the telethon_runner.
