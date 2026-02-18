@@ -35,12 +35,8 @@ def create_app(config_name=None):
     login_manager.init_app(app)
     csrf.init_app(app)
 
-    # Make csrf_token available to all templates via context processor
-    @app.context_processor
-    def inject_csrf_token():
-        """Inject CSRF token into all templates."""
-        from flask_wtf.csrf import generate_csrf
-        return dict(csrf_token=generate_csrf)
+    # Note: csrf.init_app(app) automatically provides csrf_token() to all templates
+    # No need for additional context processor - it would cause conflicts
 
     @login_manager.user_loader
     def load_user(user_id):
