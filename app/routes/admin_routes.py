@@ -905,93 +905,109 @@ def business_goal():
     """Manage business goal and generate search keywords via AI."""
     from app.services.openai_service import get_openai_service
     
-    if request.method == 'POST':
-        logger.info(f'business_goal POST: form keys={list(request.form.keys())}')
-        
-        action = request.form.get('action', '')
-        logger.info(f'business_goal: action="{action}"')
-        
-        if action == 'save_goal':
-            goal_description = request.form.get('goal_description', '').strip()
-            if not goal_description:
-                flash('Пожалуйста, опишите вашу бизнес-цель', 'warning')
+    try:
+        if request.method == 'POST':
+            logger.info(f'business_goal POST: form keys={list(request.form.keys())}')
+            
+            action = request.form.get('action', '')
+            logger.info(f'business_goal: action="{action}"')
+            
+            if action == 'save_goal':
+                goal_description = request.form.get('goal_description', '').strip()
+                if not goal_description:
+                    flash('Пожалуйста, опишите вашу бизнес-цель', 'warning')
+                    return redirect(url_for('admin.business_goal'))
+                
+                AppConfig.set('business_goal', goal_description, 
+                             'Business goal description for AI keyword generation')
+                flash('Цель сохранена. Теперь генерируйте ключевые слова!', 'success')
                 return redirect(url_for('admin.business_goal'))
             
-            AppConfig.set('business_goal', goal_description, 
-                         'Business goal description for AI keyword generation')
-            flash('Цель сохранена. Теперь генерируйте ключевые слова!', 'success')
-            return redirect(url_for('admin.business_goal'))
-        
-        elif action == 'generate_keywords':
-            goal_description = AppConfig.get('business_goal', '')
-            if not goal_description:
-                flash('Сначала опишите вашу бизнес-цель', 'warning')
+            elif action == 'generate_keywords':
+                goal_description = AppConfig.get('business_goal', '')
+                if not goal_description:
+                    flash('Сначала опишите вашу бизнес-цель', 'warning')
+                    return redirect(url_for('admin.business_goal'))
+                
+                try:
+                    # Generate keywords using OpenAI
+                    openai_service = get_openai_service()
+                    logger.info(f'OpenAI service obtained: {openai_service}')
+                    
+                    system_prompt = (
+                        'You are an expert in Telegram channel discovery and marketing. '
+                        'Generate a list of 15-25 specific, searchable keywords that will help find '
+                        'Telegram channels and groups related to the given business goal. '
+                        'Keywords should be in English, diverse, and practical for Telegram search. '
+                        'Return ONLY comma-separated keywords, no explanations.'
+                    )
+                    
+                    user_message = f'Business goal: {goal_description}'
+                    logger.info(f'Calling OpenAI with: {user_message[:50]}...')
+                    
+                    result = openai_service.chat(
+                        system_prompt=system_prompt,
+                        user_message=user_message,
+                        module='keyword_generation',
+                    )
+                    
+                    logger.info(f'OpenAI result: {result}')
+                    
+                    if result.get('content'):
+                        # Parse keywords from response
+                        keywords_text = result['content'].strip()
+                        keywords_list = [kw.strip() for kw in keywords_text.split(',') if kw.strip()]
+                        
+                        logger.info(f'Parsed {len(keywords_list)} keywords')
+                        
+                        # Clear old keywords and add new ones
+                        SearchKeyword.query.delete()
+                        
+                        for i, keyword in enumerate(keywords_list, 1):
+                            kw = SearchKeyword(
+                                keyword=keyword,
+                                language='en',
+                                active=True,
+                                priority=i,
+                            )
+                            db.session.add(kw)
+                        
+                        # CRITICAL: Set topic context for channel evaluation
+                        # This allows discovery_service to intelligently filter channels
+                        AppConfig.set('discovery_topic_context', goal_description,
+                                     'Topic context for channel discovery evaluation')
+                        
+                        db.session.commit()
+                        
+                        flash(f'✓ Сгенерировано {len(keywords_list)} ключевых слов для поиска!', 'success')
+                        logger.info(f'Generated {len(keywords_list)} keywords: {keywords_list[:5]}...')
+                    else:
+                        logger.error(f'No content in OpenAI result: {result}')
+                        flash('Ошибка при генерации ключевых слов. Попробуйте снова.', 'danger')
+                
+                except Exception as e:
+                    logger.exception(f'Error generating keywords: {e}')
+                    flash(f'Ошибка: {str(e)[:100]}', 'danger')
+                
                 return redirect(url_for('admin.business_goal'))
-            
-            try:
-                # Generate keywords using OpenAI
-                openai_service = get_openai_service()
-                
-                system_prompt = (
-                    'You are an expert in Telegram channel discovery and marketing. '
-                    'Generate a list of 15-25 specific, searchable keywords that will help find '
-                    'Telegram channels and groups related to the given business goal. '
-                    'Keywords should be in English, diverse, and practical for Telegram search. '
-                    'Return ONLY comma-separated keywords, no explanations.'
-                )
-                
-                user_message = f'Business goal: {goal_description}'
-                
-                result = openai_service.chat(
-                    system_prompt=system_prompt,
-                    user_message=user_message,
-                    module='keyword_generation',
-                )
-                
-                if result.get('content'):
-                    # Parse keywords from response
-                    keywords_text = result['content'].strip()
-                    keywords_list = [kw.strip() for kw in keywords_text.split(',') if kw.strip()]
-                    
-                    # Clear old keywords and add new ones
-                    SearchKeyword.query.delete()
-                    
-                    for i, keyword in enumerate(keywords_list, 1):
-                        kw = SearchKeyword(
-                            keyword=keyword,
-                            language='en',
-                            active=True,
-                            priority=i,
-                        )
-                        db.session.add(kw)
-                    
-                    # CRITICAL: Set topic context for channel evaluation
-                    # This allows discovery_service to intelligently filter channels
-                    AppConfig.set('discovery_topic_context', goal_description,
-                                 'Topic context for channel discovery evaluation')
-                    
-                    db.session.commit()
-                    
-                    flash(f'✓ Сгенерировано {len(keywords_list)} ключевых слов для поиска!', 'success')
-                    logger.info(f'Generated {len(keywords_list)} keywords: {keywords_list[:5]}...')
-                else:
-                    flash('Ошибка при генерации ключевых слов. Попробуйте снова.', 'danger')
-            
-            except Exception as e:
-                logger.exception(f'Error generating keywords: {e}')
-                flash(f'Ошибка: {str(e)[:100]}', 'danger')
-            
-            return redirect(url_for('admin.business_goal'))
+        
+        # GET request - show current goal and keywords
+        business_goal = AppConfig.get('business_goal', '')
+        logger.info(f'Loading business goal: {business_goal[:50] if business_goal else "None"}...')
+        
+        keywords = SearchKeyword.query.filter_by(active=True).order_by(
+            SearchKeyword.priority
+        ).all()
+        logger.info(f'Loaded {len(keywords)} keywords')
+        
+        return render_template('admin/business_goal.html', 
+                              business_goal=business_goal,
+                              keywords=keywords)
     
-    # GET request - show current goal and keywords
-    business_goal = AppConfig.get('business_goal', '')
-    keywords = SearchKeyword.query.filter_by(active=True).order_by(
-        SearchKeyword.priority
-    ).all()
-    
-    return render_template('admin/business_goal.html', 
-                          business_goal=business_goal,
-                          keywords=keywords)
+    except Exception as e:
+        logger.exception(f'Unexpected error in business_goal route: {e}')
+        flash(f'Критическая ошибка: {str(e)[:100]}', 'danger')
+        return redirect(url_for('admin.dashboard'))
 
 
 # ─── Logs ─────────────────────────────────────────────────────────────────────
