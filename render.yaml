@@ -30,38 +30,7 @@ services:
       - key: TELEGRAM_TARGET_CHANNEL
         sync: false
 
-  # 2. Telethon Long-Running Worker (24/7 Telegram connection)
-  - type: worker
-    name: telethon-worker
-    runtime: python
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python telethon_runner.py"
-    envVars:
-      - key: FLASK_ENV
-        value: production
-      - key: DATABASE_URL
-        fromDatabase:
-          name: telegram-automation-db
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: telegram-redis
-          property: connectionString
-      - key: SECRET_KEY
-        sync: false
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: TELEGRAM_API_ID
-        sync: false
-      - key: TELEGRAM_API_HASH
-        sync: false
-      - key: TELEGRAM_PHONE
-        sync: false
-      - key: TELEGRAM_TARGET_CHANNEL
-        sync: false
-
-  # 3. RQ Worker for on-demand batch tasks
+  # 2. RQ Worker for on-demand batch tasks
   - type: worker
     name: rq-worker
     runtime: python
@@ -112,7 +81,7 @@ services:
       - key: TELEGRAM_PHONE
         sync: false
 
-  # 5. Cron: Content publishing (every 2 hours)
+  # 4. Cron: Content publishing (every 2 hours)
   - type: cron
     name: content-publisher
     runtime: python
@@ -140,7 +109,7 @@ services:
       - key: TELEGRAM_API_HASH
         sync: false
 
-  # 6. Cron: Session backup (every hour)
+  # 5. Cron: Session backup (every hour)
   - type: cron
     name: session-backup
     runtime: python
