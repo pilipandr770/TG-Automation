@@ -1,2 +1,1 @@
-web: gunicorn --timeout 120 --workers 2 wsgi:app
-worker: python telethon_runner.py
+web: gunicorn --timeout 600 --workers 2 wsgi:app

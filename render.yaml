@@ -4,7 +4,7 @@ services:
     name: telegram-automation
     runtime: python
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "gunicorn --timeout 120 --workers 2 wsgi:app"
+    startCommand: "gunicorn --timeout 600 --workers 2 wsgi:app"
     envVars:
       - key: FLASK_ENV
         value: production
