@@ -21,6 +21,42 @@ admin_bp = Blueprint('admin', __name__, template_folder='../templates')
 logger = logging.getLogger(__name__)
 
 
+# ─── Diagnostics ───────────────────────────────────────────────────────────────
+
+@admin_bp.route('/status')
+@login_required
+def status():
+    """Diagnostic endpoint to check database and system status."""
+    status_info = {
+        'timestamp': datetime.utcnow().isoformat(),
+        'user': current_user.username,
+        'tables': {},
+        'config_keys': [],
+        'errors': []
+    }
+    
+    # Check table counts
+    try:
+        status_info['tables']['users'] = User.query.count()
+        status_info['tables']['app_config'] = AppConfig.query.count()
+        status_info['tables']['search_keywords'] = SearchKeyword.query.count()
+        status_info['tables']['discovered_channels'] = DiscoveredChannel.query.count()
+        status_info['tables']['contacts'] = Contact.query.count()
+        status_info['tables']['conversations'] = Conversation.query.count()
+    except Exception as e:
+        status_info['errors'].append(f'Database error: {str(e)}')
+    
+    # Check key config values
+    try:
+        config = AppConfig.query.all()
+        status_info['config_keys'] = [c.key for c in config]
+        status_info['business_goal'] = AppConfig.get('business_goal', 'NOT SET')
+    except Exception as e:
+        status_info['errors'].append(f'Config error: {str(e)}')
+    
+    return jsonify(status_info)
+
+
 # ─── Dashboard ─────────────────────────────────────────────────────────────────
 
 @admin_bp.route('/')
