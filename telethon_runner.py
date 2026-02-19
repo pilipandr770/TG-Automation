@@ -101,9 +101,19 @@ async def main():
         try:
             await client.connect()
             if not await client.is_user_authorized():
-                logger.error('Telegram client not authorized. Starting interactive authentication...')
+                logger.error('❌ Telegram client not authorized!')
+                logger.error('To authenticate, run locally: python telethon_runner.py')
+                logger.error('Or set TELEGRAM_SESSION_STRING in .env')
                 
-                # Interactive authentication
+                # Check if we're in production (Render)
+                if os.getenv('FLASK_ENV') == 'production':
+                    logger.warning('⏳ Running on production. Waiting 30 seconds for manual setup...')
+                    await asyncio.sleep(30)
+                    logger.error('❌ Giving up: No valid Telegram session. Please authenticate locally first.')
+                    return
+                
+                # Interactive authentication (only for local development)
+                logger.info('Starting interactive authentication for local development...')
                 phone = input('Enter your phone number (with country code, e.g., +1234567890): ').strip()
                 
                 await client.sign_in(phone)
