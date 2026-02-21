@@ -7,7 +7,7 @@ filters and OpenAI topic matching, and joins qualifying ones.
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from telethon import functions, types
 from telethon.errors import (
@@ -388,6 +388,8 @@ class DiscoveryService:
         If a keyword hasn't found new channels for N consecutive cycles,
         generate new keyword variants and add them to the search.
         
+        More aggressive: regenerates after 2 cycles (not 3) for faster discovery.
+        
         Returns dict with regeneration stats.
         """
         from app import db
@@ -397,6 +399,7 @@ class DiscoveryService:
             'keywords_checked': 0,
             'keywords_exhausted': 0,
             'variants_generated': 0,
+            'cycles_threshold': 2,  # More aggressive: regenerate after 2 cycles without results
         }
 
         # Get business goal / target topic for context
@@ -404,81 +407,102 @@ class DiscoveryService:
         
         keywords = SearchKeyword.query.filter_by(active=True).all()
         stats['keywords_checked'] = len(keywords)
+        
+        logger.info(f'[REGENERATE CHECK] Checking {len(keywords)} active keywords for regeneration')
 
         for kw in keywords:
-            # Only check non-regenerated keywords
-            if kw.generation_round > 0:
-                continue
-
+            # Key improvement: also check regenerated keywords (round > 0)
+            # This allows multiple levels of refinement
+            
             # Check if this keyword is exhausted
-            # (no new channels found in last 3 cycles)
-            if kw.cycles_without_new >= 3 and not kw.exhausted:
-                logger.info(f'[REGENERATE] Keyword "{kw.keyword}" exhausted (3 cycles without new channels)')
+            # (no new channels found in last N cycles)
+            if kw.cycles_without_new >= stats['cycles_threshold'] and not kw.exhausted:
+                logger.info(f'[REGENERATE START] 🔄 Keyword "{kw.keyword}" exhausted!')
+                logger.info(f'[REGENERATE START] ├─ Cycles without results: {kw.cycles_without_new}')
+                logger.info(f'[REGENERATE START] ├─ Last used: {kw.last_used}')
+                logger.info(f'[REGENERATE START] └─ Generation round: {kw.generation_round}')
+                
                 kw.exhausted = True
                 stats['keywords_exhausted'] += 1
 
-                # Generate 3 new keyword variants
+                # Generate 3-5 new keyword variants
                 variants = await self._generate_keyword_variants(kw.keyword, business_goal)
+                
+                if variants:
+                    logger.info(f'[REGENERATE] Generated {len(variants)} variants for "{kw.keyword}":')
                 
                 for variant in variants:
                     # Check if variant already exists
                     existing = SearchKeyword.query.filter_by(keyword=variant).first()
                     if existing:
+                        logger.debug(f'[REGENERATE SKIP] Variant "{variant}" already exists')
                         continue
 
-                    # Create new keyword variant
+                    # Create new keyword variant with slightly higher priority
+                    # so regenerated keywords get tried sooner
                     new_kw = SearchKeyword(
                         keyword=variant,
                         language=kw.language,
                         active=True,
-                        priority=kw.priority - 1, 
-                        generation_round=1,
+                        priority=max(kw.priority, 50),  # Higher priority for freshly generated
+                        generation_round=kw.generation_round + 1,
                         source_keyword=kw.keyword,
                     )
                     db.session.add(new_kw)
                     stats['variants_generated'] += 1
-                    logger.info(f'[REGENERATE] Generated variant: "{variant}"')
+                    logger.info(f'[REGENERATE ADD] ✅ New variant: "{variant}" (priority={new_kw.priority})')
 
                 db.session.commit()
+                logger.info(f'[REGENERATE END] Completed regeneration for "{kw.keyword}" → {stats["variants_generated"]} new variants\n')
 
+        logger.info(f'[REGENERATE SUMMARY] Checked: {stats["keywords_checked"]}, Exhausted: {stats["keywords_exhausted"]}, Generated: {stats["variants_generated"]}')
         return stats
 
     async def _generate_keyword_variants(self, keyword: str, business_goal: str) -> list:
-        """Generate 3 new keyword variants for a given keyword.
+        """Generate new keyword variants for a given keyword.
         
         Uses OpenAI to create related but different search terms on the same topic.
+        Generates 3-5 diverse variants using different angles/approaches.
         """
-        prompt = f'''Generate 3 alternative search keywords for Telegram that are related to but different from "{keyword}".
-These should target the same niche: {business_goal}
+        prompt = f'''Generate 5 alternative search keywords for Telegram that will help find the same communities as "{keyword}".
+
+Target niche: {business_goal}
 
 Requirements:
-- Each keyword should be 1-3 words
-- Use different angles/approaches than the original "{keyword}"
-- Focus on keywords that would find discussion groups, channels, and supergroups
-- Reply with ONLY 3 keywords, one per line, no numbering
+- Each keyword should be 1-4 words
+- Use DIFFERENT angles and approaches (not just synonyms)
+- Include both English AND Russian variants
+- Focus on finding discussion groups, not just broadcast channels
+- Try different phrasings: topic + "chat", "group", "community", "discussion"
 
-Examples if original is "adult dating":
-- dating singles
-- hookup chat
-- adult meet'''
+Example transformation for "adult dating":
+Original: adult dating
+Variants: dating singles chat, hookup group, adult relationships, singles community, mature discussion
+
+Now generate 5 variants for "{keyword}":
+Reply with ONLY keywords, one per line, no numbering'''
 
         result = self._openai.chat(
-            system_prompt='You are a Telegram search keyword generator for niche communities.',
+            system_prompt='You are a Telegram search keyword expert. Generate practical, searchable keywords.',
             user_message=prompt,
             module='discovery',
         )
 
         if not result.get('content'):
+            logger.warning(f'[GENERATE VARIANTS] No response from OpenAI for "{keyword}"')
             return []
 
         # Parse the response
         variants = []
         for line in result['content'].strip().split('\n'):
             variant = line.strip().lower()
-            if variant and len(variant) > 3:
+            # Basic validation: 3+ characters, not a duplicate of original
+            if variant and len(variant) > 3 and variant != keyword.lower():
                 variants.append(variant)
+                logger.debug(f'[GENERATE VARIANTS] Parsed: "{variant}"')
 
-        return variants[:3]  # Return at most 3
+        logger.info(f'[GENERATE VARIANTS] Generated {len(variants)} variants for "{keyword}": {variants}')
+        return variants[:5]  # Return at most 5
 
     async def check_discovery_limits(self) -> dict:
         """Check if we're approaching Telegram limits.
@@ -631,15 +655,30 @@ Examples if original is "adult dating":
             db.session.commit()
 
         # Check and regenerate exhausted keywords
-        logger.info('[REGENERATE] Checking if keywords are exhausted...')
+        logger.info('=' * 70)
+        logger.info('[REGENERATE] Checking if keywords need regeneration...')
+        logger.info('=' * 70)
         regen_stats = await self.check_and_regenerate_exhausted_keywords()
         stats['keywords_regenerated'] = regen_stats['variants_generated']
-        if regen_stats['keywords_exhausted'] > 0:
-            logger.info(f'[REGENERATE] Exhausted {regen_stats["keywords_exhausted"]} keywords, generated {regen_stats["variants_generated"]} variants')
+        
+        if regen_stats['keywords_exhausted'] > 0 or regen_stats['variants_generated'] > 0:
+            logger.info('=' * 70)
+            logger.info(f'[REGENERATE SUMMARY] 🔄 Keyword Regeneration Results:')
+            logger.info(f'├─ Keywords checked: {regen_stats["keywords_checked"]}')
+            logger.info(f'├─ Keywords exhausted: {regen_stats["keywords_exhausted"]}')
+            logger.info(f'├─ New variants generated: {regen_stats["variants_generated"]}')
+            logger.info(f'└─ Exhaustion threshold: {regen_stats["cycles_threshold"]} cycles')
+            logger.info('=' * 70)
 
         # Print final cycle summary
         logger.info('=' * 70)
-        logger.info(f'[CYCLE SUMMARY] Found: {stats["channels_found"]}, Evaluated: {stats["channels_evaluated"]}, Passed: {stats["channels_passed"]}, Joined: {stats["channels_joined"]}')
+        logger.info(f'[CYCLE SUMMARY] Discovery Cycle #{cycle_count} Complete:')
+        logger.info(f'├─ Keywords processed: {stats["keywords_processed"]}')
+        logger.info(f'├─ Channels found: {stats["channels_found"]}')
+        logger.info(f'├─ Channels evaluated: {stats["channels_evaluated"]}')
+        logger.info(f'├─ Channels passed filters: {stats["channels_passed"]}')
+        logger.info(f'├─ Channels joined: {stats["channels_joined"]}')
+        logger.info(f'└─ Keywords regenerated: {stats["keywords_regenerated"]}')
         logger.info('=' * 70)
         
         return stats
@@ -653,34 +692,51 @@ Examples if original is "adult dating":
         
         while True:
             cycle_count += 1
+            logger.info('')
+            logger.info('╔' + '═' * 68 + '╗')
+            logger.info(f'║ 🔍 DISCOVERY CYCLE #{cycle_count} STARTING '.ljust(69) + '║')
+            logger.info('╚' + '═' * 68 + '╝')
+            
             try:
-                logger.info(f'[CYCLE {cycle_count}] Starting discovery...')
                 stats = await self.run_discovery_cycle()
-                logger.info(f'[CYCLE {cycle_count}] Complete: {stats}')
                 
-                # Check if it's time to run audience scan
-                now = datetime.utcnow()
-                time_since_scan = (now - last_audience_scan).total_seconds()
+                # Show which keywords were regenerated
+                from app.models import SearchKeyword
+                regenerated = SearchKeyword.query.filter(
+                    SearchKeyword.generation_round > 0,
+                    SearchKeyword.created_at > datetime.utcnow() - timedelta(minutes=10)
+                ).all()
                 
-                if time_since_scan >= audience_scan_interval:
-                    logger.info('[AUDIENCE] Starting background audience scan (every 10 minutes)...')
-                    try:
-                        from app.services.audience_service import AudienceService
-                        audience_service = AudienceService()
-                        # Use the same client manager to avoid encryption key issues
-                        audience_service._client_manager = self._client_manager
-                        
-                        scan_result = await audience_service.run_audience_scan()
-                        logger.info(f'[AUDIENCE] Scan complete: channels={scan_result["channels_scanned"]}, messages={scan_result["messages_read"]}, contacts_saved={scan_result["saved_contacts"]}')
-                        last_audience_scan = now
-                    except Exception as e:
-                        logger.error(f'[AUDIENCE] Scan error: {e}', exc_info=True)
+                if regenerated:
+                    logger.info('')
+                    logger.info('🆕 Recently Regenerated Keywords (last 10 minutes):')
+                    for kw in regenerated:
+                        logger.info(f'   • "{kw.keyword}" (from: "{kw.source_keyword}", round: {kw.generation_round})')
+                    logger.info('')
                 
             except Exception as e:
-                logger.error(f'[CYCLE {cycle_count}] ERROR: {e}', exc_info=True)
+                logger.error(f'[CYCLE {cycle_count}] ❌ ERROR: {e}', exc_info=True)
 
+            # Check if it's time to run audience scan
+            now = datetime.utcnow()
+            time_since_scan = (now - last_audience_scan).total_seconds()
+            
+            if time_since_scan >= audience_scan_interval:
+                logger.info('[AUDIENCE] Starting background audience scan (every 10 minutes)...')
+                try:
+                    from app.services.audience_service import AudienceService
+                    audience_service = AudienceService()
+                    # Use the same client manager to avoid encryption key issues
+                    audience_service._client_manager = self._client_manager
+                    
+                    scan_result = await audience_service.run_audience_scan()
+                    logger.info(f'[AUDIENCE] Scan complete: channels={scan_result["channels_scanned"]}, messages={scan_result["messages_read"]}, contacts_saved={scan_result["saved_contacts"]}')
+                    last_audience_scan = now
+                except Exception as e:
+                    logger.error(f'[AUDIENCE] Scan error: {e}', exc_info=True)
+            
             interval = self._get_cycle_interval()
-            logger.info(f'[WAIT] Next cycle in {interval}s...')
+            logger.info(f'⏱️  [WAIT] Next discovery cycle in {interval}s ({interval//60}m)...')
             await asyncio.sleep(interval)
 
 
