@@ -43,8 +43,21 @@ class DiscoveryService:
             return 50
 
     def _get_require_comments(self) -> bool:
-        """Comments are REQUIRED - we only work with channels where users discuss."""
-        return True
+        """Whether to require channels to have discussion/comments enabled.
+        
+        Comments are available in:
+        - Megagroups (supergroups with discussion enabled)
+        - Gigagroups (massive groups with auto-discussion)
+        
+        Regular channels won't have comments unless they're linked to a discussion group.
+        """
+        try:
+            from app.models import AppConfig
+            # Default to False to allow regular channels
+            value = AppConfig.get('discovery_require_comments', 'false').lower()
+            return value in ('true', '1', 'yes')
+        except:
+            return False
 
     def _get_topic_prompt(self) -> str:
         from app.models import AppConfig
@@ -178,16 +191,23 @@ class DiscoveryService:
         }
 
         # Subscriber count (from the entity's participants_count attribute)
+        # Note: participants_count may be 0 for private/invited channels
         sub_count = getattr(channel_entity, 'participants_count', 0) or 0
         result['subscriber_count'] = sub_count
 
         min_subs = self._get_min_subscribers()
-        logger.debug(f'[EVAL {channel_title}] Subscribers: {sub_count} (min required: {min_subs})')
+        logger.info(f'[EVAL {channel_title}] Subscribers: {sub_count} (min required: {min_subs})')
         
-        if sub_count < min_subs:
+        # Allow channels with 0 participants_count (they may not expose it)
+        # Only filter if explicitly below minimum and > 0
+        if sub_count > 0 and sub_count < min_subs:
             result['reason'] = f'Too few subscribers ({sub_count} < {min_subs})'
             logger.info(f'[FILTER REJECT] {channel_title}: {result["reason"]}')
             return result
+        
+        if sub_count == 0:
+            logger.info(f'[EVAL {channel_title}] ⚠️ Subscribers not available (participants_count=0), allowing anyway')
+
 
         # Comments check
         has_comments = bool(
