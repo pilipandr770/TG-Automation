@@ -74,6 +74,10 @@ async def listen_redis_commands(app, redis_client, discovery, audience, invitati
 
 
 async def main():
+    logger.info('=' * 70)
+    logger.info('TELETHON_RUNNER: Starting main() function')
+    logger.info('=' * 70)
+    
     # Import Flask app and services
     from app import create_app, db
     from app.services.telegram_client import get_telegram_client_manager
@@ -86,16 +90,18 @@ async def main():
     from app.services.conversation_service import get_conversation_service
     from app.services.content_fetcher import ContentFetcher
 
+    logger.info('📦 Creating Flask app...')
     app = create_app()
 
     with app.app_context():
         # Initialize Telegram client
+        logger.info('🔐 Initializing Telegram client...')
         client_mgr = get_telegram_client_manager()
         client_mgr.load_session_from_db()
         client = await client_mgr.get_client()
 
         if not client:
-            logger.error('Failed to create Telegram client. Check credentials.')
+            logger.error('❌ Failed to create Telegram client. Check credentials.')
             return
 
         try:
@@ -149,17 +155,30 @@ async def main():
             return
 
         # Initialize services
+        logger.info('⚙️  Initializing services...')
         rate_limiter = get_rate_limiter()
+        logger.info('✅ Rate limiter initialized')
+        
         openai_service = get_openai_service()
+        logger.info('✅ OpenAI service initialized')
+        
         content_fetcher = ContentFetcher()
+        logger.info('✅ Content fetcher initialized')
 
         discovery = get_discovery_service()
+        logger.info('✅ Discovery service initialized')
+        
         audience = get_audience_service()
-        print(f'[TELETHON_RUNNER] About to initialize invitation service...', flush=True)
+        logger.info('✅ Audience service initialized')
+        
         invitation = get_invitation_service(client_mgr, rate_limiter)
-        print(f'[TELETHON_RUNNER] Invitation service initialized: {invitation}', flush=True)
+        logger.info('✅ Invitation service initialized')
+        
         publisher = get_publisher_service(client_mgr, openai_service, content_fetcher)
+        logger.info('✅ Publisher service initialized')
+        
         conversation = get_conversation_service(client_mgr, openai_service)
+        logger.info('✅ Conversation service initialized')
 
         # Register event handlers for Module 5 (incoming messages, payments)
         conversation.register_handlers(client)
@@ -199,27 +218,36 @@ async def main():
         tasks = []
 
         # Module 1: Continuous discovery
+        logger.info('🔍 Starting Module 1: Discovery Service')
         tasks.append(asyncio.create_task(
             run_with_app_context(app, discovery.run_forever)
         ))
 
         # Module 2: Continuous audience scanning
+        logger.info('👥 Starting Module 2: Audience Service')
         tasks.append(asyncio.create_task(
             run_with_app_context(app, audience.run_forever)
         ))
 
         # Module 3: Continuous content publishing
+        logger.info('📢 Starting Module 3: Publisher Service')
         tasks.append(asyncio.create_task(
             run_with_app_context(app, publisher.run_forever)
         ))
 
         # Module 4: Continuous invitation sending
-        print(f'[TELETHON_RUNNER] Creating invitation task...', flush=True)
+        logger.info('💌 Starting Module 4: Invitation Service')
         invitation_task = asyncio.create_task(
             run_with_app_context(app, invitation.run_forever)
         )
-        print(f'[TELETHON_RUNNER] Invitation task created: {invitation_task}', flush=True)
         tasks.append(invitation_task)
+
+        logger.info(f'✅ All {len(tasks)} background modules started successfully!')
+        logger.info(f'🎯 Discovery (Module 1): Searching for channels by keywords')
+        logger.info(f'👁️  Audience (Module 2): Scanning messages and analyzing contacts')
+        logger.info(f'✉️  Invitations (Module 4): Sending invitation messages')
+        logger.info(f'📝 Publisher (Module 3): Publishing content to target channel')
+        logger.info(f'💬 Conversation (Module 5): Listening for incoming private messages')
 
         # Heartbeat
         if redis_client:
@@ -234,31 +262,54 @@ async def main():
 
         # Start Telethon client event loop to listen for incoming messages
         # CRITICAL: client.run_until_disconnected() must run to process updates
-        logger.info('Starting Telethon event listener for incoming message handling...')
+        logger.info('🎯 Starting Telethon event listener for incoming message handling...')
         
         async def client_event_loop():
             """Wrapper to ensure client properly listens for updates."""
             try:
-                logger.info('Telethon event listener started - waiting for messages...')
+                logger.info('💬 Telethon event listener started - waiting for messages...')
                 await client.run_until_disconnected()
             except Exception as e:
-                logger.error(f'Telethon event loop error: {e}', exc_info=True)
+                logger.error(f'❌ Telethon event loop error: {e}', exc_info=True)
         
         client_task = asyncio.create_task(client_event_loop())
         tasks.append(client_task)
 
-        # Wait for shutdown signal or any task to fail
-        done, pending = await asyncio.wait(
-            tasks + [asyncio.create_task(shutdown_event.wait())],
-            return_when=asyncio.FIRST_COMPLETED
-        )
-        
-        # Check if any task failed
-        for task in done:
-            if task is not shutdown_event.wait():
-                exc = task.exception()
-                if exc:
-                    logger.error(f'Task failed: {exc}')
+        logger.info('=' * 70)
+        logger.info('🎉 TELETHON WORKER FULLY STARTED AND RUNNING!')
+        logger.info('=' * 70)
+        logger.info('📊 Status:')
+        logger.info('  🔍 Module 1 Discovery: Searching channels by keywords')
+        logger.info('  👥 Module 2 Audience: Scanning messages for target audience')
+        logger.info('  💌 Module 3 Invitations: Ready to send invitations')
+        logger.info('  📢 Module 4 Publisher: Ready to publish content')
+        logger.info('  💬 Module 5 Conversation: Listening for private messages')
+        logger.info('=' * 70)
+
+        # Monitor all tasks - don't exit if one fails, just log it
+        logger.info('Monitoring background tasks...')
+        while True:
+            try:
+                # Check all tasks
+                for task in tasks:
+                    if task.done():
+                        try:
+                            exc = task.exception()
+                            if exc:
+                                logger.error(f'❌ Task failed: {exc}')
+                                logger.warning(f'🔄 A background task failed. Continuing...')
+                        except asyncio.CancelledError:
+                            pass
+                
+                # Sleep briefly then check again
+                await asyncio.sleep(30)
+                
+            except asyncio.CancelledError:
+                logger.info('⏹️  Task monitoring cancelled')
+                break
+            except Exception as e:
+                logger.error(f'Task monitoring error: {e}', exc_info=True)
+                await asyncio.sleep(5)
 
         # Cleanup
         logger.info('Shutting down tasks...')
@@ -278,11 +329,21 @@ async def run_with_app_context(app, coro_func):
     """Run an async function within Flask app context."""
     with app.app_context():
         try:
+            logger.info(f'Starting service: {coro_func.__name__}')
             await coro_func()
         except asyncio.CancelledError:
+            logger.info(f'Service cancelled: {coro_func.__name__}')
             pass
         except Exception as e:
-            logger.error(f'Task error: {e}', exc_info=True)
+            logger.error(f'Task error in {coro_func.__name__}: {e}', exc_info=True)
+            # Small delay before restarting
+            await asyncio.sleep(5)
+            # Retry once
+            try:
+                logger.info(f'Restarting service: {coro_func.__name__}')
+                await coro_func()
+            except Exception as e2:
+                logger.error(f'Task error (retry) in {coro_func.__name__}: {e2}', exc_info=True)
 
 
 if __name__ == '__main__':

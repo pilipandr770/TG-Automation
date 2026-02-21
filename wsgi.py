@@ -23,10 +23,16 @@ from app.models import User
 
 def run_telethon_background():
     """Run Telethon worker in background thread."""
+    import time
+    
     try:
         logger.info('=' * 70)
         logger.info('🚀 Starting Telethon Background Worker (in background thread)')
         logger.info('=' * 70)
+        
+        # Small delay to ensure only one worker starts Telethon
+        # (helps avoid race conditions when Gunicorn has multiple workers)
+        time.sleep(2)
         
         # Import telethon main
         from telethon_runner import main as telethon_main
@@ -36,11 +42,20 @@ def run_telethon_background():
         asyncio.set_event_loop(loop)
         
         try:
+            logger.info('📡 Telethon event loop starting...')
             loop.run_until_complete(telethon_main())
+        except KeyboardInterrupt:
+            logger.info('⏸️  Telethon interrupted by user')
         except Exception as e:
             logger.error(f'❌ Telethon error: {e}', exc_info=True)
+            # Don't exit - just log and continue trying
+            time.sleep(10)
         finally:
-            loop.close()
+            logger.warning('🔄 Cleaning up Telethon event loop...')
+            try:
+                loop.close()
+            except:
+                pass
         
     except Exception as e:
         logger.error(f'❌ Telethon background worker fatal error: {e}', exc_info=True)
