@@ -43,21 +43,15 @@ class DiscoveryService:
             return 50
 
     def _get_require_comments(self) -> bool:
-        """Whether to require channels to have discussion/comments enabled.
+        """Comments are REQUIRED - we only work with channels/groups where users discuss.
         
-        Comments are available in:
-        - Megagroups (supergroups with discussion enabled)
-        - Gigagroups (massive groups with auto-discussion)
-        
-        Regular channels won't have comments unless they're linked to a discussion group.
+        This means:
+        - Regular Chat/Group (types.Chat) - always OK
+        - Channel with megagroup=True - OK (has linked discussion group)
+        - Channel with gigagroup=True - OK (massive group with auto-discussion)
+        - Broadcast Channel without discussions - NOT OK
         """
-        try:
-            from app.models import AppConfig
-            # Default to False to allow regular channels
-            value = AppConfig.get('discovery_require_comments', 'false').lower()
-            return value in ('true', '1', 'yes')
-        except:
-            return False
+        return True
 
     def _get_topic_prompt(self) -> str:
         from app.models import AppConfig
@@ -107,11 +101,12 @@ class DiscoveryService:
         channels_found = {}
         
         try:
-            logger.info('[SEARCH] Searching for NEW channels matching "%s"', keyword)
+            logger.info('[SEARCH] Searching for NEW channels/groups/supergroups matching "%s"', keyword)
             
-            # Method 1: Use SearchGlobal to find channels by keyword
+            # We search for ALL types first (channels, groups, supergroups)
+            # Then filter to keep only those with comments/discussions enabled
             try:
-                # SearchGlobal searches across all of Telegram for channels
+                # SearchGlobal with broadcasts_only=False finds groups, supergroups, and channels
                 request = functions.messages.SearchGlobalRequest(
                     q=keyword,
                     filter=types.InputMessagesFilterEmpty(),  # Required parameter
@@ -121,25 +116,54 @@ class DiscoveryService:
                     offset_rate=0,
                     offset_peer='self',
                     offset_id=0,
-                    broadcasts_only=True,  # Search channels, not groups
+                    broadcasts_only=False,  # Search ALL: channels, groups, supergroups
                 )
                 result = await client(request)
                 
                 if result and hasattr(result, 'chats') and result.chats:
                     for chat in result.chats:
-                        # We want channels
+                        chat_id = chat.id
+                        if chat_id in channels_found:
+                            continue
+                            
+                        title = getattr(chat, 'title', 'Unknown')
                         is_channel = isinstance(chat, types.Channel)
-                        if is_channel and chat.id not in channels_found:
-                            channels_found[chat.id] = chat
-                            title = getattr(chat, 'title', 'Unknown')
-                            subs = getattr(chat, 'participants_count', 0) or 0
-                            megagroup = getattr(chat, 'megagroup', False)
-                            gigagroup = getattr(chat, 'gigagroup', False)
-                            logger.info(f'[SEARCH] Found: "{title}" ({chat.id}) - {subs} subs, megagroup={megagroup}, gigagroup={gigagroup}')
+                        is_group = isinstance(chat, types.Chat)
+                        
+                        # For channels: must be megagroup or gigagroup (has discussions)
+                        # For groups/chats: all are OK (they support comments by definition)
+                        megagroup = getattr(chat, 'megagroup', False) if is_channel else False
+                        gigagroup = getattr(chat, 'gigagroup', False) if is_channel else False
+                        is_supergroup = getattr(chat, 'supergroup', False) if is_channel else False
+                        
+                        subs = getattr(chat, 'participants_count', 0) or 0
+                        
+                        # Keep if:
+                        # - It's a regular group/chat (types.Chat) - they support discussions
+                        # - It's a Channel with megagroup=True (broadcast with discussion thread)
+                        # - It's a Channel with gigagroup=True (massive group)
+                        # - It's a Channel with supergroup=True (supergroup)
+                        
+                        keep = False
+                        reason = ''
+                        
+                        if is_group:
+                            keep = True
+                            reason = 'Group (supports discussions)'
+                        elif is_channel and (megagroup or gigagroup or is_supergroup):
+                            keep = True
+                            reason = f'Channel with discussions (megagroup={megagroup}, gigagroup={gigagroup}, supergroup={is_supergroup})'
+                        
+                        if keep:
+                            channels_found[chat_id] = chat
+                            logger.info(f'[SEARCH] ✅ Added: "{title}" ({chat_id}) - {subs} members - {reason}')
+                        else:
+                            chat_type = 'Channel' if is_channel else 'Group/Chat'
+                            logger.debug(f'[SEARCH] ❌ Skipped: "{title}" ({chat_id}) - {chat_type} without discussions')
                 
-                logger.info('[SEARCH] SearchGlobal found %d channels for "%s"', len(channels_found), keyword)
+                logger.info('[SEARCH] SearchGlobal found %d qualifying channels/groups for "%s"', len(channels_found), keyword)
             except Exception as e:
-                logger.debug('[SEARCH] SearchGlobal error: %s', str(e)[:100])
+                logger.warning('[SEARCH] SearchGlobal error: %s', str(e)[:150])
             
             # Method 2: Try as username directly (e.g., "photography" -> @photography)
             try:
@@ -210,17 +234,29 @@ class DiscoveryService:
 
 
         # Comments check
-        has_comments = bool(
-            getattr(channel_entity, 'megagroup', False)
-            or getattr(channel_entity, 'gigagroup', False)
-        )
+        # We want:
+        # - Regular Chat/Group (types.Chat) - always has discussions
+        # - Channel with megagroup=True - has discussion thread
+        # - Channel with gigagroup=True - massive group with auto-discussion
+        is_chat = isinstance(channel_entity, types.Chat)
+        megagroup = getattr(channel_entity, 'megagroup', False)
+        gigagroup = getattr(channel_entity, 'gigagroup', False)
+        
+        has_comments = is_chat or megagroup or gigagroup
         result['has_comments'] = has_comments
 
         require_comments = self._get_require_comments()
-        logger.debug(f'[EVAL {channel_title}] Comments available: {has_comments} (required: {require_comments})')
+        if is_chat:
+            logger.info(f'[EVAL {channel_title}] ✅ Regular Group/Chat (always has discussions)')
+        elif megagroup:
+            logger.info(f'[EVAL {channel_title}] ✅ Channel with megagroup (has discussion thread)')
+        elif gigagroup:
+            logger.info(f'[EVAL {channel_title}] ✅ Channel with gigagroup (massive group)')
+        else:
+            logger.info(f'[EVAL {channel_title}] ❌ Broadcast channel without discussions')
         
         if require_comments and not has_comments:
-            result['reason'] = 'Comments/discussion not available'
+            result['reason'] = 'Not a group/supergroup/megagroup - no discussions'
             logger.info(f'[FILTER REJECT] {channel_title}: {result["reason"]}')
             return result
 
