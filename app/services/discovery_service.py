@@ -10,7 +10,11 @@ import logging
 from datetime import datetime
 
 from telethon import functions, types
-from telethon.errors import FloodWaitError, ChannelPrivateError
+from telethon.errors import (
+    FloodWaitError, ChannelPrivateError, 
+    UsernameNotOccupiedError, UserAlreadyParticipantError,
+    ChatAdminRequiredError, ChatNotModifiedError
+)
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +157,8 @@ class DiscoveryService:
         Returns a dict with keys: passed (bool), subscriber_count,
         has_comments, topic_score, reason.
         """
+        channel_title = getattr(channel_entity, 'title', 'Unknown')
+        
         result = {
             'passed': False,
             'subscriber_count': 0,
@@ -166,8 +172,11 @@ class DiscoveryService:
         result['subscriber_count'] = sub_count
 
         min_subs = self._get_min_subscribers()
+        logger.debug(f'[EVAL {channel_title}] Subscribers: {sub_count} (min required: {min_subs})')
+        
         if sub_count < min_subs:
             result['reason'] = f'Too few subscribers ({sub_count} < {min_subs})'
+            logger.info(f'[FILTER REJECT] {channel_title}: {result["reason"]}')
             return result
 
         # Comments check
@@ -177,8 +186,12 @@ class DiscoveryService:
         )
         result['has_comments'] = has_comments
 
-        if self._get_require_comments() and not has_comments:
+        require_comments = self._get_require_comments()
+        logger.debug(f'[EVAL {channel_title}] Comments available: {has_comments} (required: {require_comments})')
+        
+        if require_comments and not has_comments:
             result['reason'] = 'Comments/discussion not available'
+            logger.info(f'[FILTER REJECT] {channel_title}: {result["reason"]}')
             return result
 
         # Topic matching via OpenAI
@@ -192,6 +205,8 @@ class DiscoveryService:
             f'Channel description: {about}'
         )
 
+        logger.debug(f'[EVAL {channel_title}] Checking topic relevance...')
+        
         ai_result = self._openai.chat(
             system_prompt=self._get_topic_prompt(),
             user_message=user_msg,
@@ -204,23 +219,32 @@ class DiscoveryService:
                 topic_score = float(ai_result['content'].strip())
                 topic_score = max(0.0, min(1.0, topic_score))
             except ValueError:
-                logger.warning('Could not parse topic score: %s', ai_result['content'])
+                logger.warning(f'[EVAL {channel_title}] Could not parse topic score: {ai_result["content"]}')
 
         result['topic_score'] = topic_score
 
         min_score = self._get_min_topic_score()
+        logger.debug(f'[EVAL {channel_title}] Topic score: {topic_score:.2f} (min required: {min_score})')
+        
         if topic_score < min_score:
             result['reason'] = f'Topic score too low ({topic_score:.2f} < {min_score})'
+            logger.info(f'[FILTER REJECT] {channel_title}: {result["reason"]}')
             return result
 
         result['passed'] = True
+        logger.info(f'✅ [FILTER PASSED] {channel_title}: {sub_count} subs, score={topic_score:.2f}')
         result['reason'] = 'Passed all filters'
         return result
 
     async def join_channel(self, channel_entity) -> bool:
-        """Join a channel or group.
+        """Join a channel or group using multiple strategies.
 
-        Returns True on success.
+        Tries different approaches:
+        1. Direct JoinChannelRequest with entity
+        2. If that fails, try using username
+        3. If that fails, try using channel ID
+        
+        Returns True on success or if already a member.
         """
         client = await self._client_manager.get_client()
         if client is None:
@@ -229,27 +253,65 @@ class DiscoveryService:
 
         channel_title = getattr(channel_entity, 'title', 'Unknown')
         channel_id = getattr(channel_entity, 'id', '?')
+        channel_username = getattr(channel_entity, 'username', None)
 
         if not await self._rate_limiter.acquire('join_channel'):
             logger.warning(f'[JOIN] Rate limited for {channel_title} ({channel_id})')
             return False
 
+        logger.info(f'[JOIN] Attempting to join: {channel_title} ({channel_id}) username={channel_username}')
+
+        # Strategy 1: Direct join with entity
         try:
-            logger.info(f'[JOIN] Attempting to join: {channel_title} ({channel_id})')
+            logger.debug(f'[JOIN] Strategy 1: Direct JoinChannelRequest with entity')
             await client(functions.channels.JoinChannelRequest(
                 channel=channel_entity,
             ))
-            logger.info(f'✅ [JOIN SUCCESS] Joined channel: {channel_title} ({channel_id})')
+            logger.info(f'✅ [JOIN SUCCESS] Joined {channel_title} ({channel_id}) - Strategy 1')
+            return True
+        except UserAlreadyParticipantError:
+            logger.info(f'✅ [ALREADY JOINED] {channel_title} ({channel_id}) - already a member')
             return True
         except FloodWaitError as e:
             logger.warning(f'[JOIN] FloodWait on {channel_title}: {e}')
             await self._rate_limiter.handle_flood_wait(e)
             return False
-        except ChannelPrivateError:
+        except ChannelPrivateError as e:
             logger.warning(f'[JOIN] Channel is private: {channel_title} ({channel_id})')
             return False
         except Exception as e:
-            logger.error(f'[JOIN] Error joining {channel_title} ({channel_id}): {str(e)[:100]}')
+            logger.warning(f'[JOIN] Strategy 1 failed: {type(e).__name__}: {str(e)[:100]}')
+
+        # Strategy 2: Try with username if available
+        if channel_username:
+            try:
+                logger.debug(f'[JOIN] Strategy 2: JoinChannelRequest with username @{channel_username}')
+                # Resolve username to entity
+                resolved = await client.get_entity(f'@{channel_username}')
+                await client(functions.channels.JoinChannelRequest(
+                    channel=resolved,
+                ))
+                logger.info(f'✅ [JOIN SUCCESS] Joined {channel_title} ({channel_id}) - Strategy 2 (username)')
+                return True
+            except UserAlreadyParticipantError:
+                logger.info(f'✅ [ALREADY JOINED] {channel_title} ({channel_id}) - already a member')
+                return True
+            except Exception as e:
+                logger.warning(f'[JOIN] Strategy 2 failed: {type(e).__name__}: {str(e)[:100]}')
+
+        # Strategy 3: Try with channel ID
+        try:
+            logger.debug(f'[JOIN] Strategy 3: JoinChannelRequest with channel ID {channel_id}')
+            await client(functions.channels.JoinChannelRequest(
+                channel=channel_id,
+            ))
+            logger.info(f'✅ [JOIN SUCCESS] Joined {channel_title} ({channel_id}) - Strategy 3 (ID)')
+            return True
+        except UserAlreadyParticipantError:
+            logger.info(f'✅ [ALREADY JOINED] {channel_title} ({channel_id}) - already a member')
+            return True
+        except Exception as e:
+            logger.error(f'[JOIN] All strategies failed for {channel_title} ({channel_id}): {type(e).__name__}: {str(e)[:150]}')
             return False
 
     # ── smart keyword regeneration ───────────────────────────────────────
@@ -475,6 +537,8 @@ Examples if original is "adult dating":
                 if evaluation['passed']:
                     stats['channels_passed'] += 1
                     logger.info(f'[JOIN ATTEMPT] {channel_title} ({telegram_id}) - passed filters')
+                    # Small delay to ensure API is ready
+                    await asyncio.sleep(0.5)
                     joined = await self.join_channel(entity)
                     if joined:
                         discovered.is_joined = True
