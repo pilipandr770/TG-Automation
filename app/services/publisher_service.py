@@ -3,6 +3,7 @@ import logging
 import os
 from datetime import datetime, timedelta
 from telethon import types
+from flask import current_app
 from app import db
 from app.models import ContentSource, PublishedPost, PostMedia, AppConfig
 
@@ -291,7 +292,7 @@ class PublisherService:
         logger.info('[PUBLISHER CYCLE] STAGE 1/3: GENERATE (fetch & rewrite)')
         logger.info('=' * 70)
         
-        target_channel = AppConfig.get('target_channel', '@your_channel')
+        target_channel = AppConfig.get('target_channel') or current_app.config.get('TELEGRAM_TARGET_CHANNEL', '@your_channel')
         default_language = AppConfig.get('default_language', 'en')
 
         # === STAGE 1: GENERATE ===
@@ -476,7 +477,7 @@ class PublisherService:
             
             try:
                 # Check if target channel is configured
-                target_channel = AppConfig.get('target_channel')
+                target_channel = AppConfig.get('target_channel') or current_app.config.get('TELEGRAM_TARGET_CHANNEL')
                 if not target_channel:
                     logger.error('=' * 70)
                     logger.error('🚨 CRITICAL: target_channel NOT CONFIGURED!')
