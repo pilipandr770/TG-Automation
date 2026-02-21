@@ -36,9 +36,10 @@ class AudienceService:
     def _get_scan_interval(self) -> int:
         try:
             from app.models import AppConfig
-            return int(AppConfig.get('audience_scan_interval', '7200'))
+            # Default 600 seconds (10 min) for continuous operation, can be overridden in config
+            return int(AppConfig.get('audience_scan_interval', '600'))
         except (TypeError, ValueError):
-            return 7200
+            return 600
 
     # ── core methods ─────────────────────────────────────────────────────
 
@@ -299,21 +300,41 @@ class AudienceService:
             'saved_contacts': 0,
         }
 
+        logger.info('\n' + '=' * 70)
+        logger.info('[AUDIENCE SCAN START] Querying joined channels from database...')
+        logger.info('=' * 70)
+        
         channels = DiscoveredChannel.query.filter_by(
             is_joined=True, is_blacklisted=False
         ).all()
         
-        logger.info(f'[AUDIENCE SCAN] Found {len(channels)} joined channels to scan')
+        logger.info(f'✅ [QUERY RESULT] Found {len(channels)} joined channels in database')
+        if channels:
+            for ch in channels[:5]:  # Show first 5
+                logger.info(f'  - {ch.title} ({ch.telegram_id})')
+            if len(channels) > 5:
+                logger.info(f'  ... and {len(channels) - 5} more')
 
         criteria_list = AudienceCriteria.query.filter_by(active=True).all()
+        logger.info(f'✅ [CRITERIA RESULT] Found {len(criteria_list)} active audience criteria')
+        if criteria_list:
+            for crit in criteria_list:
+                logger.info(f'  - {crit.name}: {crit.keywords}')
+        
         if not criteria_list:
-            logger.info('⚠️  No active audience criteria — skipping scan')
+            logger.info('⚠️  [SKIP] No active audience criteria — skipping scan')
+            logger.info('=' * 70)
             return stats
         
-        logger.info(f'[AUDIENCE SCAN] Using {len(criteria_list)} criteria for analysis')
+        if not channels:
+            logger.info('⚠️  [SKIP] No joined channels — skipping scan')
+            logger.info('=' * 70)
+            return stats
+        
+        logger.info(f'\n✅ [READY] Starting scan of {len(channels)} channels with {len(criteria_list)} criteria...')
 
         for channel in channels:
-            logger.info(f'[SCAN CHANNEL] Scanning channel: {channel.title or channel.telegram_id}')
+            logger.info(f'\n[SCAN CHANNEL] Scanning: {channel.title} ({channel.telegram_id})')
             messages = await self.scan_channel_messages(channel.telegram_id, username=channel.username)
             stats['channels_scanned'] += 1
             stats['messages_read'] += len(messages)
@@ -403,16 +424,25 @@ class AudienceService:
 
     async def run_forever(self) -> None:
         """Run audience scans in an infinite loop."""
-        logger.info('Audience service starting infinite loop')
+        logger.info('=' * 70)
+        logger.info('[AUDIENCE] Starting infinite loop - will scan joined channels regularly')
+        logger.info('=' * 70)
+        
+        cycle_count = 0
         while True:
+            cycle_count += 1
+            interval = self._get_scan_interval()
+            logger.info(f'\n[AUDIENCE CYCLE START] Cycle #{cycle_count}')
+            
             try:
                 stats = await self.run_audience_scan()
-                logger.info('Audience scan stats: %s', stats)
+                logger.info('=' * 70)
+                logger.info(f'[AUDIENCE CYCLE COMPLETE] Stats: {stats}')
+                logger.info('=' * 70)
             except Exception as e:
-                logger.error('Audience scan error: %s', e)
+                logger.error(f'[AUDIENCE ERROR] Scan failed: {type(e).__name__}: {str(e)[:150]}', exc_info=True)
 
-            interval = self._get_scan_interval()
-            logger.info('Next audience scan in %d seconds', interval)
+            logger.info(f'[AUDIENCE] Waiting {interval} seconds until next scan...')
             await asyncio.sleep(interval)
 
 
