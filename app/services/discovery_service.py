@@ -119,7 +119,10 @@ class DiscoveryService:
                         if is_channel and chat.id not in channels_found:
                             channels_found[chat.id] = chat
                             title = getattr(chat, 'title', 'Unknown')
-                            logger.debug('[SEARCH] SearchGlobal found: %s', title)
+                            subs = getattr(chat, 'participants_count', 0) or 0
+                            megagroup = getattr(chat, 'megagroup', False)
+                            gigagroup = getattr(chat, 'gigagroup', False)
+                            logger.info(f'[SEARCH] Found: "{title}" ({chat.id}) - {subs} subs, megagroup={megagroup}, gigagroup={gigagroup}')
                 
                 logger.info('[SEARCH] SearchGlobal found %d channels for "%s"', len(channels_found), keyword)
             except Exception as e:
@@ -135,12 +138,19 @@ class DiscoveryService:
                 if isinstance(entity, types.Channel) and entity.id not in channels_found:
                     channels_found[entity.id] = entity
                     title = getattr(entity, 'title', 'Unknown')
-                    logger.info('[SEARCH] Direct lookup found: %s', title)
+                    subs = getattr(entity, 'participants_count', 0) or 0
+                    logger.info(f'[SEARCH] Direct lookup found: "{title}" ({entity.id}) - {subs} subs')
             except Exception as e:
-                logger.debug('[SEARCH] Direct lookup failed for "%s": %s', keyword, str(e)[:80])
+                logger.debug(f'[SEARCH] Direct lookup failed for "{keyword}": {type(e).__name__}')
             
             result = list(channels_found.values())
-            logger.info('[SEARCH] "%s": found %d NEW channels total', keyword, len(result))
+            if result:
+                logger.info(f'[SEARCH] ✅ Total found for "{keyword}": {len(result)} channels')
+                for ch in result[:3]:  # Log first 3 channels
+                    subs = getattr(ch, 'participants_count', 0) or 0
+                    logger.debug(f'  - {getattr(ch, "title", "Unknown")} ({subs} subs)')
+            else:
+                logger.info(f'[SEARCH] ❌ No channels found for "{keyword}"')
             return result
             
         except FloodWaitError as e:
