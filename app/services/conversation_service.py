@@ -1,6 +1,8 @@
 import logging
 import os
 import tempfile
+import asyncio
+import random
 from datetime import datetime
 from telethon import events
 from app import db
@@ -49,6 +51,7 @@ class ConversationService:
                 'content': msg.content
             })
 
+        logger.debug(f'[HISTORY] Retrieved {len(history)} messages from conversation {conversation_id}')
         return history
 
     def _format_context_for_openai(self, conversation, message_history, user_message, mode=MessageMode.PRIVATE_DIALOG):
@@ -79,6 +82,19 @@ class ConversationService:
             # Get conversation history
             history = self.get_conversation_history(conversation.id, limit=20)
 
+            # Log conversation context for debugging
+            logger.info('=' * 70)
+            logger.info(f'[CONTEXT] Generating response for user {conversation.telegram_user_id}')
+            logger.info(f'[CONTEXT] Conversation history length: {len(history)} messages')
+            if history:
+                logger.info(f'[CONTEXT] Latest messages in order:')
+                for i, msg in enumerate(history[-5:], 1):  # Show last 5 messages
+                    role = msg.get('role', 'unknown').upper()
+                    content = msg.get('content', '')[:60]
+                    logger.info(f'  {i}. [{role}] {content}...')
+            logger.info(f'[CONTEXT] New user message: {user_message[:100]}...')
+            logger.info('=' * 70)
+
             # Format context for OpenAI (private dialog mode)
             system_prompt = self._format_context_for_openai(conversation, history, user_message, mode=MessageMode.PRIVATE_DIALOG)
 
@@ -86,6 +102,8 @@ class ConversationService:
             messages = history.copy()
             messages.append({'role': 'user', 'content': user_message})
 
+            logger.info(f'[OPENAI] Sending {len(messages)} messages to OpenAI (including new user message)')
+            
             # Use OpenAI chat_with_history to include full dialog + system prompt
             result = self.openai_service.chat_with_history(
                 system_prompt=system_prompt,
@@ -264,6 +282,12 @@ class ConversationService:
 
             logger.info(f'Received {message_type} from {telegram_user_id}: {user_message_text[:50]}...')
 
+            # Add random delay (10 to 90 seconds) to make responses look natural
+            delay_seconds = random.uniform(10, 90)
+            logger.info(f'⏰ [DELAY] Adding {delay_seconds:.1f}s delay before generating response (simulating typing/thinking)')
+            await asyncio.sleep(delay_seconds)
+            logger.info(f'⏰ [DELAY] Delay complete, now generating response...')
+
             # Show typing indicator
             async with event.client.action(conv.telegram_user_id, 'typing'):
                 # Generate AI response
@@ -283,7 +307,7 @@ class ConversationService:
                 conv.total_messages += 1
                 db.session.commit()
 
-                logger.info(f'Sent response to {telegram_user_id}')
+                logger.info(f'✅ Sent response to {telegram_user_id}')
 
         except Exception as e:
             logger.error(f'Error handling message: {e}', exc_info=True)
