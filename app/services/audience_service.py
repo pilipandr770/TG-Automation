@@ -52,10 +52,11 @@ class AudienceService:
         """
         client = await self._client_manager.get_client()
         if client is None:
+            logger.warning('[SCAN] No client available for channel %s', channel_id)
             return []
 
         if not await self._rate_limiter.acquire('read_messages'):
-            logger.info('Rate limited — skipping message scan for channel %s', channel_id)
+            logger.warning('[SCAN] Rate limited — skipping message scan for channel %s', channel_id)
             return []
 
         results = []
@@ -64,28 +65,43 @@ class AudienceService:
         # Fall back to ID if no username
         channel_ref = f'@{username}' if username else channel_id
         
+        logger.info(f'[SCAN] Attempting to fetch messages from {channel_ref} (limit={limit})')
+        
         try:
             messages = await client.get_messages(channel_ref, limit=limit)
+            logger.info(f'[SCAN] Successfully fetched {len(messages)} messages from {channel_ref}')
         except FloodWaitError as e:
+            logger.warning(f'[SCAN] FloodWait on {channel_ref}: {e}')
             await self._rate_limiter.handle_flood_wait(e)
             return []
         except ChannelPrivateError:
-            logger.warning('Channel %s is private or we were kicked', channel_id)
+            logger.warning(f'[SCAN] Channel {channel_id} is private or we were kicked')
             return []
         except Exception as e:
-            logger.warning('Failed to fetch messages from channel %s: %s', channel_id, str(e)[:100])
+            logger.warning(f'[SCAN] Failed to fetch messages from channel {channel_id}: {str(e)[:100]}')
             return []
 
         # Process messages one by one, skip any with errors
+        skipped_no_text = 0
+        skipped_no_sender = 0
+        skipped_not_user = 0
+        skipped_bots = 0
+        
         for msg in messages:
             try:
-                if not msg.text or not msg.sender:
+                if not msg.text:
+                    skipped_no_text += 1
+                    continue
+                if not msg.sender:
+                    skipped_no_sender += 1
                     continue
                 sender = msg.sender
                 if not isinstance(sender, types.User):
+                    skipped_not_user += 1
                     continue
                 # Skip bots
                 if getattr(sender, 'bot', False):
+                    skipped_bots += 1
                     continue
 
                 results.append({
@@ -98,9 +114,10 @@ class AudienceService:
                 })
             except Exception as e:
                 # Skip individual messages with issues, continue with next message
-                logger.debug('Skipping message in channel %s: %s', channel_id, str(e)[:80])
+                logger.debug('[SCAN] Skipping message in channel %s: %s', channel_id, str(e)[:80])
                 continue
 
+        logger.info(f'[SCAN] Processed messages from {channel_ref}: {len(results)} users extracted (skipped: {skipped_no_text} no text, {skipped_no_sender} no sender, {skipped_not_user} not user, {skipped_bots} bots)')
         return results
 
     def _pre_filter(self, message_text: str, criteria) -> bool:
@@ -142,9 +159,12 @@ class AudienceService:
         first_name = user_entity.get('first_name') or ''
         first_name = str(first_name).lower() if first_name else ''
         
+        logger.debug(f'[ANALYZE USER] @{username} ({first_name}): "{message_text[:60]}..."')
+        
         # Check if likely a bot (by username patterns or indicators)
         bot_indicators = ['bot', 'автобот', 'робот', 'spam', 'click', 'like']
         if any(ind in username for ind in bot_indicators) or any(ind in first_name for ind in bot_indicators):
+            logger.debug(f'[BOT DETECTED] @{username} - contains bot indicator')
             return {
                 'category': 'bot',
                 'match': False,
@@ -169,6 +189,8 @@ class AudienceService:
             f'Message: {message_text[:500]}'
         )
         
+        logger.debug(f'[OPENAI QUERY] Categorizing @{username}: {user_msg_categorize[:100]}...')
+        
         ai_category = self._openai.chat(
             system_prompt=system_prompt_categorize,
             user_message=user_msg_categorize,
@@ -182,16 +204,21 @@ class AudienceService:
         if ai_category.get('content'):
             try:
                 content = ai_category['content'].strip()
+                logger.debug(f'[OPENAI RESPONSE] Raw: {content}')
                 if content:  # Only parse if non-empty
                     parsed = json.loads(content)
                     category = parsed.get('category', 'target_audience')
                     category_confidence = float(parsed.get('confidence', 0.5))
                     category_reason = str(parsed.get('reason', ''))
+                    logger.info(f'[CATEGORIZED] @{username} → {category} ({category_confidence:.2f})')
             except (json.JSONDecodeError, ValueError, TypeError) as e:
-                logger.warning('Could not parse category AI response: %s', e)
+                logger.warning(f'Could not parse category AI response: {e} | Response: {repr(ai_category.get("content"))}')
+        else:
+            logger.warning(f'[OPENAI ERROR] No content in categorization response for @{username}')
         
         # Step 3: If NOT target_audience, return immediately
         if category != 'target_audience':
+            logger.debug(f'[SKIP ANALYZE] @{username} is {category}, not analyzing further')
             return {
                 'category': category,
                 'match': False,
@@ -212,6 +239,8 @@ class AudienceService:
             f'User message: {message_text[:500]}'
         )
 
+        logger.debug(f'[OPENAI QUERY] Matching @{username} against criteria "{criteria.name}"')
+        
         ai_match = self._openai.chat(
             system_prompt=system_prompt_match,
             user_message=user_msg_match,
@@ -227,19 +256,23 @@ class AudienceService:
         }
 
         if not ai_match.get('content'):
+            logger.warning(f'[OPENAI ERROR] No content in matching response for @{username}')
             return default
 
         try:
             content = ai_match['content'].strip()
+            logger.debug(f'[OPENAI RESPONSE] (match) Raw: {content}')
             if not content:  # Empty response
                 return default
             parsed = json.loads(content)
-            return {
+            result = {
                 'category': 'target_audience',
                 'match': bool(parsed.get('match', False)),
                 'confidence': float(parsed.get('confidence', 0.6)),
                 'reason': str(parsed.get('reason', '')),
             }
+            logger.info(f'[MATCH RESULT] @{username} match={result["match"]} confidence={result["confidence"]:.2f}')
+            return result
         except (json.JSONDecodeError, ValueError, TypeError, AttributeError) as e:
             logger.warning('Could not parse match AI response: %s | Content: %s | Using categorization confidence: %.2f', e, repr(ai_match.get('content')), category_confidence)
             return default
@@ -269,16 +302,23 @@ class AudienceService:
         channels = DiscoveredChannel.query.filter_by(
             is_joined=True, is_blacklisted=False
         ).all()
+        
+        logger.info(f'[AUDIENCE SCAN] Found {len(channels)} joined channels to scan')
 
         criteria_list = AudienceCriteria.query.filter_by(active=True).all()
         if not criteria_list:
-            logger.info('No active audience criteria — skipping scan')
+            logger.info('⚠️  No active audience criteria — skipping scan')
             return stats
+        
+        logger.info(f'[AUDIENCE SCAN] Using {len(criteria_list)} criteria for analysis')
 
         for channel in channels:
+            logger.info(f'[SCAN CHANNEL] Scanning channel: {channel.title or channel.telegram_id}')
             messages = await self.scan_channel_messages(channel.telegram_id, username=channel.username)
             stats['channels_scanned'] += 1
             stats['messages_read'] += len(messages)
+            
+            logger.info(f'[SCAN CHANNEL] Read {len(messages)} messages from {channel.title or channel.telegram_id}')
 
             # Update last scanned
             channel.last_scanned_at = datetime.utcnow()
@@ -294,13 +334,17 @@ class AudienceService:
                 for criteria in criteria_list:
                     # Pre-filter
                     if not self._pre_filter(msg_data['message_text'], criteria):
+                        logger.debug(f'[PRE-FILTER] Skipped {msg_data.get("username", user_id)} - keywords not matched')
                         continue
 
+                    logger.info(f'[ANALYZING] User @{msg_data.get("username", user_id)} - Message preview: {msg_data["message_text"][:50]}...')
+                    
                     # Analyze and categorize
                     evaluation = await self.analyze_user(
                         msg_data, msg_data['message_text'], criteria
                     )
                     stats['users_analyzed'] += 1
+                    logger.info(f'[ANALYSIS RESULT] Category: {evaluation.get("category")}, Confidence: {evaluation.get("confidence", 0):.2f}')
 
                     # Track all categories
                     category = evaluation.get('category', 'target_audience')
@@ -325,9 +369,10 @@ class AudienceService:
                     # For target_audience, just check confidence threshold
                     # Skip the secondary matching - categorization is sufficient
                     if evaluation.get('confidence', 0.0) < criteria.min_confidence:
-                        logger.debug(f'Low confidence ({evaluation.get("confidence"):.2f} < {criteria.min_confidence}) for {msg_data.get("username")}')
+                        logger.info(f'[LOW CONFIDENCE] Skipping {msg_data.get("username")} ({evaluation.get("confidence", 0):.2f} < {criteria.min_confidence})')
                         continue
 
+                    logger.info(f'✅ [SAVED] Added contact: @{msg_data.get("username", user_id)}')
                     stats['saved_contacts'] += 1
 
                     contact = Contact(
@@ -351,7 +396,9 @@ class AudienceService:
             # Small delay between channels
             await asyncio.sleep(1)
 
-        logger.info('Audience scan complete: %s', stats)
+        logger.info('=' * 70)
+        logger.info(f'[AUDIENCE SCAN COMPLETE] Results: {stats}')
+        logger.info('=' * 70)
         return stats
 
     async def run_forever(self) -> None:

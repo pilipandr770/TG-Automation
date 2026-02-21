@@ -224,28 +224,32 @@ class DiscoveryService:
         """
         client = await self._client_manager.get_client()
         if client is None:
+            logger.warning('[JOIN] No client available')
             return False
 
+        channel_title = getattr(channel_entity, 'title', 'Unknown')
+        channel_id = getattr(channel_entity, 'id', '?')
+
         if not await self._rate_limiter.acquire('join_channel'):
-            logger.info('Rate limited — skipping join')
+            logger.warning(f'[JOIN] Rate limited for {channel_title} ({channel_id})')
             return False
 
         try:
+            logger.info(f'[JOIN] Attempting to join: {channel_title} ({channel_id})')
             await client(functions.channels.JoinChannelRequest(
                 channel=channel_entity,
             ))
-            logger.info('Joined channel: %s', getattr(channel_entity, 'title', ''))
+            logger.info(f'✅ [JOIN SUCCESS] Joined channel: {channel_title} ({channel_id})')
             return True
         except FloodWaitError as e:
+            logger.warning(f'[JOIN] FloodWait on {channel_title}: {e}')
             await self._rate_limiter.handle_flood_wait(e)
             return False
         except ChannelPrivateError:
-            logger.warning(
-                'Channel is private: %s', getattr(channel_entity, 'title', '')
-            )
+            logger.warning(f'[JOIN] Channel is private: {channel_title} ({channel_id})')
             return False
         except Exception as e:
-            logger.error('Join error: %s', e)
+            logger.error(f'[JOIN] Error joining {channel_title} ({channel_id}): {str(e)[:100]}')
             return False
 
     # ── smart keyword regeneration ───────────────────────────────────────
@@ -381,6 +385,10 @@ Examples if original is "adult dating":
         from app import db
         from app.models import SearchKeyword, DiscoveredChannel
 
+        logger.info('=' * 70)
+        logger.info('[DISCOVERY CYCLE] Starting new cycle')
+        logger.info('=' * 70)
+        
         stats = {
             'keywords_processed': 0,
             'channels_found': 0,
@@ -417,26 +425,29 @@ Examples if original is "adult dating":
             # Update last_used
             kw.last_used = datetime.utcnow()
             kw.results_count = len(entities)
-
             # Track whether this keyword found new channels
             channels_found_this_cycle = 0
 
             for entity in entities:
                 stats['channels_found'] += 1
                 telegram_id = entity.id
+                channel_title = getattr(entity, 'title', 'Unknown')
 
                 # Skip already-known channels
                 existing = DiscoveredChannel.query.filter_by(
                     telegram_id=telegram_id
                 ).first()
                 if existing:
+                    logger.debug(f'[DISCOVERY] Channel already known: {channel_title} ({telegram_id})')
                     continue
 
                 channels_found_this_cycle += 1
+                logger.info(f'[DISCOVERY] New channel found: {channel_title} ({telegram_id})')
 
                 # Evaluate
                 stats['channels_evaluated'] += 1
                 evaluation = await self.evaluate_channel(entity)
+                logger.info(f'[EVALUATION] {channel_title}: passed={evaluation["passed"]}, subs={evaluation["subscriber_count"]}, score={evaluation["topic_score"]:.2f}')
 
                 # Determine channel type
                 channel_type = 'channel'
@@ -463,12 +474,19 @@ Examples if original is "adult dating":
 
                 if evaluation['passed']:
                     stats['channels_passed'] += 1
+                    logger.info(f'[JOIN ATTEMPT] {channel_title} ({telegram_id}) - passed filters')
                     joined = await self.join_channel(entity)
                     if joined:
                         discovered.is_joined = True
                         discovered.join_date = datetime.utcnow()
                         discovered.status = 'joined'
                         stats['channels_joined'] += 1
+                        logger.info(f'✅ [SAVED JOINED] {channel_title} is_joined=True')
+                    else:
+                        logger.warning(f'❌ [JOIN FAILED] {channel_title} - join attempt failed, saving as not_joined')
+                        discovered.status = 'join_failed'
+                else:
+                    logger.info(f'[SKIP] {channel_title} - did not pass evaluation filters')
 
                 db.session.add(discovered)
 
@@ -489,6 +507,11 @@ Examples if original is "adult dating":
         if regen_stats['keywords_exhausted'] > 0:
             logger.info(f'[REGENERATE] Exhausted {regen_stats["keywords_exhausted"]} keywords, generated {regen_stats["variants_generated"]} variants')
 
+        # Print final cycle summary
+        logger.info('=' * 70)
+        logger.info(f'[CYCLE SUMMARY] Found: {stats["channels_found"]}, Evaluated: {stats["channels_evaluated"]}, Passed: {stats["channels_passed"]}, Joined: {stats["channels_joined"]}')
+        logger.info('=' * 70)
+        
         return stats
 
     async def run_forever(self) -> None:
