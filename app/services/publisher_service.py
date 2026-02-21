@@ -21,31 +21,58 @@ class PublisherService:
         """Fetch new content from all active sources."""
         try:
             sources = ContentSource.query.filter_by(active=True).all()
+            logger.info(f'[PUBLISHER FETCH] ====== FETCHING CONTENT ======')
             logger.info(f'[PUBLISHER FETCH] Found {len(sources)} active content sources')
             
             if not sources:
-                logger.warning('[PUBLISHER FETCH] NO ACTIVE SOURCES CONFIGURED!')
+                logger.error('[PUBLISHER FETCH] ❌ NO ACTIVE SOURCES CONFIGURED!')
+                logger.error('[PUBLISHER FETCH] Please add content sources in admin panel:')
+                logger.error('[PUBLISHER FETCH]   - Go to /admin/content-sources')
+                logger.error('[PUBLISHER FETCH]   - Add RSS feeds (OpenAI, CoinDesk, etc)')
+                logger.error('[PUBLISHER FETCH]   - Mark them as Active')
                 return []
+            
+            # Show all active sources
+            logger.info(f'[PUBLISHER FETCH] Active sources:')
+            for idx, source in enumerate(sources, 1):
+                logger.info(f'  [{idx}] {source.name} ({source.source_type})')
+                logger.info(f'      URL: {source.url}')
+                logger.info(f'      Interval: {source.fetch_interval_hours}h')
+                if source.last_fetched:
+                    logger.info(f'      Last fetched: {source.last_fetched}')
+                else:
+                    logger.info(f'      Last fetched: NEVER')
             
             all_items = []
 
             for idx, source in enumerate(sources, 1):
-                logger.info(f'[PUBLISHER FETCH] [{idx}/{len(sources)}] Processing source: {source.name} ({source.source_type})')
+                logger.info(f'[PUBLISHER FETCH] [{idx}/{len(sources)}] Processing: {source.name}')
                 
                 # Check if it's time to fetch
                 if source.last_fetched:
                     next_fetch = source.last_fetched + timedelta(hours=source.fetch_interval_hours)
-                    if datetime.utcnow() < next_fetch:
-                        logger.info(f'[PUBLISHER FETCH] [{idx}] Source not due yet (next: {next_fetch})')
+                    time_until_next = (next_fetch - datetime.utcnow()).total_seconds()
+                    if time_until_next > 0:
+                        logger.info(f'[PUBLISHER FETCH] [{idx}] ⏱️ Not due yet (in {time_until_next:.0f}s, next: {next_fetch})')
                         continue
+                    else:
+                        logger.info(f'[PUBLISHER FETCH] [{idx}] ✅ Due for fetching')
 
-                logger.info(f'[PUBLISHER FETCH] [{idx}] Fetching items from {source.url}')
+                logger.info(f'[PUBLISHER FETCH] [{idx}] 🔄 Fetching from: {source.url}')
                 items = self.content_fetcher.fetch_source(source)
-                logger.info(f'[PUBLISHER FETCH] [{idx}] Fetched {len(items) if items else 0} items')
+                logger.info(f'[PUBLISHER FETCH] [{idx}] ✅ Fetched {len(items) if items else 0} items')
                 
                 if not items:
-                    logger.warning(f'[PUBLISHER FETCH] [{idx}] No items returned from {source.name}')
+                    logger.warning(f'[PUBLISHER FETCH] [{idx}] ⚠️ No items returned from {source.name}')
+                    # Still mark as fetched even if empty
+                    source.last_fetched = datetime.utcnow()
+                    db.session.commit()
                     continue
+                
+                # Show fetched items
+                logger.info(f'[PUBLISHER FETCH] [{idx}] Items found:')
+                for item_idx, item in enumerate(items[:3], 1):
+                    logger.info(f'      [{item_idx}] {item["title"][:50]}...')
                 
                 for item in items:
                     # Skip duplicates
@@ -53,6 +80,7 @@ class PublisherService:
                         item['source_id'] = source.id
                         item['language'] = source.language
                         all_items.append(item)
+                        logger.debug(f'[PUBLISHER FETCH] Added: {item["title"][:50]}...')
                     else:
                         logger.debug(f'[PUBLISHER FETCH] Duplicate skipped: {item["url"][:60]}...')
 
@@ -61,26 +89,27 @@ class PublisherService:
                 db.session.commit()
                 logger.info(f'[PUBLISHER FETCH] [{idx}] Updated last_fetched for {source.name}')
 
-            logger.info(f'[PUBLISHER FETCH] COMPLETE: {len(all_items)} unique items from {len(sources)} sources')
+            logger.info(f'[PUBLISHER FETCH] ====== COMPLETE ======')
+            logger.info(f'[PUBLISHER FETCH] Result: {len(all_items)} unique items ready to publish')
             return all_items
         
         except Exception as e:
-            logger.error(f'[PUBLISHER FETCH] CRITICAL ERROR: {e}', exc_info=True)
+            logger.error(f'[PUBLISHER FETCH] 💥 CRITICAL ERROR: {e}', exc_info=True)
             return []
 
     async def rewrite_content(self, item, language):
         """Use OpenAI to rewrite content for the target language."""
         try:
-            logger.info(f'[PUBLISHER REWRITE] Starting rewrite for: {item["title"][:60]}...')
+            logger.info(f'[PUBLISHER REWRITE] Title: {item["title"][:60]}...')
             
             system_prompt = AppConfig.get('openai_prompt_publisher',
                 'Rewrite this article for a Telegram channel. Make it engaging, concise, and add relevant emojis.')
-            logger.debug(f'[PUBLISHER REWRITE] System prompt: {system_prompt[:100]}...')
+            logger.debug(f'[PUBLISHER REWRITE] System prompt: {system_prompt[:80]}...')
 
             user_message = f"Title: {item['title']}\n\nContent: {item['content'][:1500]}\n\nLanguage: {language}"
-            logger.debug(f'[PUBLISHER REWRITE] User message length: {len(user_message)} chars')
+            logger.debug(f'[PUBLISHER REWRITE] Input: {len(user_message)} chars')
 
-            logger.info(f'[PUBLISHER REWRITE] Calling OpenAI...')
+            logger.info(f'[PUBLISHER REWRITE] Calling OpenAI API...')
             result = self.openai_service.chat(
                 system_prompt=system_prompt,
                 user_message=user_message,
@@ -88,24 +117,24 @@ class PublisherService:
             )
 
             if not result:
-                logger.error(f'[PUBLISHER REWRITE] OpenAI returned None')
+                logger.error(f'[PUBLISHER REWRITE] ❌ OpenAI returned None')
                 return None, 0
             
             if 'content' not in result:
-                logger.error(f'[PUBLISHER REWRITE] OpenAI response missing "content" key: {result.keys()}')
+                logger.error(f'[PUBLISHER REWRITE] ❌ OpenAI response missing "content" key: {list(result.keys())}')
                 return None, 0
             
             content = result['content']
             if not content:
-                logger.warning(f'[PUBLISHER REWRITE] OpenAI returned empty content')
+                logger.warning(f'[PUBLISHER REWRITE] ❌ OpenAI returned empty content')
                 return None, 0
             
             tokens = result.get('total_tokens', result.get('tokens', 0))
-            logger.info(f'[PUBLISHER REWRITE] SUCCESS: {len(content)} chars, {tokens} tokens')
+            logger.info(f'[PUBLISHER REWRITE] ✅ Success: {len(content)} chars, {tokens} tokens')
             return content, tokens
 
         except Exception as e:
-            logger.error(f'[PUBLISHER REWRITE] FAILED: {e}', exc_info=True)
+            logger.error(f'[PUBLISHER REWRITE] 💥 FAILED: {e}', exc_info=True)
             return None, 0
 
     async def _resolve_channel_entity(self, channel_identifier):
@@ -213,32 +242,41 @@ class PublisherService:
             
             # === STEP 4: Log publication attempt ===
             media_info = f"({len(media_paths)} media files)" if media_paths else "(text only)"
-            logger.info(f'[PUBLISH] SENDING: {len(text)} chars {media_info} to {channel}')
-            logger.debug(f'[PUBLISH] Text preview: {text[:100]}...')
+            logger.info(f'[PUBLISH] SENDING TO: {channel}')
+            logger.info(f'[PUBLISH] Content: {len(text)} chars {media_info}')
+            logger.debug(f'[PUBLISH] Preview: {text[:100]}...')
             
             # === STEP 5: Send message ===
             try:
                 if not media_paths:
                     # Send text only
+                    logger.info(f'[PUBLISH] Executing: send_message()')
                     message = await client.send_message(channel_entity, text)
                 elif len(media_paths) == 1:
                     # Send with single media
+                    logger.info(f'[PUBLISH] Executing: send_file() with 1 media')
                     message = await client.send_file(channel_entity, media_paths[0], caption=text)
                 else:
                     # Send with multiple media (album)
+                    logger.info(f'[PUBLISH] Executing: send_file() with {len(media_paths)} media (album)')
                     message = await client.send_file(channel_entity, media_paths, caption=text)
                 
                 # === STEP 6: Log success ===
-                logger.info(f'[PUBLISH] SUCCESS: Published to {channel}, message ID: {message.id}')
+                logger.info(f'[PUBLISH] ✅ SUCCESS: Published to {channel}')
+                logger.info(f'[PUBLISH] Message ID: {message.id}')
+                logger.info(f'[PUBLISH] Message date: {message.date}')
                 return message.id
                 
             except Exception as send_err:
-                logger.error(f'[PUBLISH] SEND FAILED: {send_err}', exc_info=True)
-                logger.error(f'[PUBLISH] Channel: {channel}, Entity type: {type(channel_entity).__name__}')
+                logger.error(f'[PUBLISH] ❌ SEND FAILED: {type(send_err).__name__}: {send_err}', exc_info=True)
+                logger.error(f'[PUBLISH] Debug info:')
+                logger.error(f'  - Channel: {channel}')
+                logger.error(f'  - Entity type: {type(channel_entity).__name__}')
+                logger.error(f'  - Entity ID: {getattr(channel_entity, "id", "N/A")}')
                 raise  # Re-raise to be caught by outer exception handler
         
         except Exception as e:
-            logger.error(f'[PUBLISH] ABORT: Failed to publish to {channel}: {e}', exc_info=True)
+            logger.error(f'[PUBLISH] ❌ ABORT: {type(e).__name__}: {e}', exc_info=True)
             return None
 
     async def run_publish_cycle(self, max_posts=3):
@@ -249,30 +287,40 @@ class PublisherService:
         2. PUBLISH: Send to channel (execution)
         3. RECORD: Save to database (tracking)
         """
+        logger.info('=' * 70)
+        logger.info('[PUBLISHER CYCLE] STAGE 1/3: GENERATE (fetch & rewrite)')
+        logger.info('=' * 70)
+        
         target_channel = AppConfig.get('target_channel', '@your_channel')
         default_language = AppConfig.get('default_language', 'en')
 
         # === STAGE 1: GENERATE ===
-        logger.info(f'[PUBLISHER CYCLE] GENERATE: Fetching new content...')
+        logger.info(f'[PUBLISHER CYCLE] Fetching new content...')
         items = await self.fetch_new_content()
+        
         if not items:
-            logger.info('[PUBLISHER CYCLE] GENERATE: No new content to publish')
+            logger.warning('[PUBLISHER CYCLE] ⚠️ No new content found')
+            logger.warning('[PUBLISHER CYCLE] Possible causes:')
+            logger.warning('[PUBLISHER CYCLE]   1. No active content sources configured')
+            logger.warning('[PUBLISHER CYCLE]   2. Content sources recently fetched (fetch interval not reached)')
+            logger.warning('[PUBLISHER CYCLE]   3. All content already published (duplicates)')
+            logger.warning('[PUBLISHER CYCLE]   4. Content fetch failed (check RSS URLs)')
             return 0
 
         items = items[:max_posts]
-        logger.info(f'[PUBLISHER CYCLE] GENERATE: Processing {len(items)} items...')
+        logger.info(f'[PUBLISHER CYCLE] Processing {len(items)} items for publication (max: {max_posts})')
 
         # Pre-generate all content (separate from publishing)
         generated_items = []
         for idx, item in enumerate(items, 1):
-            logger.info(f'[PUBLISHER CYCLE] GENERATE: [{idx}/{len(items)}] Rewriting: {item["title"][:50]}...')
+            logger.info(f'[PUBLISHER CYCLE] [{idx}/{len(items)}] Rewriting: "{item["title"][:50]}..."')
             rewritten, tokens = await self.rewrite_content(item, item.get('language', default_language))
             
             if not rewritten:
-                logger.error(f'[PUBLISHER CYCLE] GENERATE: [{idx}/{len(items)}] SKIPPED - rewrite failed: {item["title"]}')
+                logger.error(f'[PUBLISHER CYCLE] [{idx}/{len(items)}] ❌ SKIPPED - rewrite failed')
                 continue
             
-            logger.info(f'[PUBLISHER CYCLE] GENERATE: [{idx}/{len(items)}] OK - {len(rewritten)} chars')
+            logger.info(f'[PUBLISHER CYCLE] [{idx}/{len(items)}] ✅ Ready - {len(rewritten)} chars')
             generated_items.append({
                 'source_data': item,
                 'rewritten_content': rewritten,
@@ -280,13 +328,16 @@ class PublisherService:
             })
 
         if not generated_items:
-            logger.warning('[PUBLISHER CYCLE] GENERATE: No items successfully rewritten')
+            logger.error('[PUBLISHER CYCLE] 💥 No items successfully rewritten')
             return 0
 
-        logger.info(f'[PUBLISHER CYCLE] GENERATE: Complete - {len(generated_items)}/{len(items)} ready to publish')
-
+        logger.info('')
+        logger.info('=' * 70)
+        logger.info(f'[PUBLISHER CYCLE] STAGE 2/3: PUBLISH ({len(generated_items)} items)')
+        logger.info('=' * 70)
+        logger.info(f'[PUBLISHER CYCLE] Publishing to: {target_channel}')
+        
         # === STAGE 2: PUBLISH ===
-        logger.info(f'[PUBLISHER CYCLE] PUBLISH: Starting publication to {target_channel}...')
         published_count = 0
 
         for idx, item_data in enumerate(generated_items, 1):
@@ -294,7 +345,7 @@ class PublisherService:
             rewritten = item_data['rewritten_content']
             tokens = item_data['tokens']
             
-            logger.info(f'[PUBLISHER CYCLE] PUBLISH: [{idx}/{len(generated_items)}] Publishing: {item["title"][:50]}...')
+            logger.info(f'[PUBLISHER CYCLE] [{idx}/{len(generated_items)}] Publishing: "{item["title"][:50]}..."')
             
             # EXPLICIT PUBLISH CALL (logs happen inside publish_to_channel)
             message_id = await self.publish_to_channel(rewritten, target_channel)
@@ -318,16 +369,24 @@ class PublisherService:
 
             if message_id:
                 published_count += 1
-                logger.info(f'[PUBLISHER CYCLE] RECORD: [{idx}/{len(generated_items)}] DB saved - post ID {post.id}, msg ID {message_id}')
+                logger.info(f'[PUBLISHER CYCLE] [{idx}/{len(generated_items)}] ✅ SAVED - Post ID {post.id}, Message ID {message_id}')
             else:
-                logger.error(f'[PUBLISHER CYCLE] RECORD: [{idx}/{len(generated_items)}] FAILED - post ID {post.id} marked as failed')
+                logger.error(f'[PUBLISHER CYCLE] [{idx}/{len(generated_items)}] ❌ FAILED - Post ID {post.id}, publish failed')
 
             # Delay between posts (avoid flooding)
             if idx < len(generated_items):
-                logger.info(f'[PUBLISHER CYCLE] Delay 10s before next post...')
+                logger.info(f'[PUBLISHER CYCLE] ⏱️ Delay 10s before next post...')
                 await asyncio.sleep(10)
 
-        logger.info(f'[PUBLISHER CYCLE] COMPLETE: {published_count}/{len(generated_items)} published, {len(items) - len(generated_items)} failed')
+        logger.info('')
+        logger.info('=' * 70)
+        logger.info('[PUBLISHER CYCLE] STAGE 3/3: COMPLETE')
+        logger.info('=' * 70)
+        logger.info(f'[PUBLISHER CYCLE] Published: {published_count}/{len(generated_items)} items')
+        logger.info(f'[PUBLISHER CYCLE] Failed: {len(generated_items) - published_count}/{len(generated_items)} items')
+        logger.info(f'[PUBLISHER CYCLE] Total processed: {len(items)} from sources')
+        logger.info('=' * 70)
+        
         return published_count
 
     def _get_publish_interval(self) -> int:
@@ -410,32 +469,49 @@ class PublisherService:
         
         while True:
             cycle_count += 1
+            logger.info('')
+            logger.info('╔' + '═' * 68 + '╗')
+            logger.info(f'║ 📢 PUBLISHER CYCLE #{cycle_count} STARTING '.ljust(69) + '║')
+            logger.info('╚' + '═' * 68 + '╝')
+            
             try:
-                logger.info(f'[PUBLISHER CYCLE {cycle_count}] ====== STARTING CYCLE ======')
-                
                 # Check if target channel is configured
                 target_channel = AppConfig.get('target_channel')
                 if not target_channel:
-                    logger.warning('[PUBLISHER CYCLE] No target_channel configured in AppConfig!')
-                    logger.warning('[PUBLISHER CYCLE] Please set "target_channel" in admin settings (e.g., @mychannel or -100123456789)')
+                    logger.error('=' * 70)
+                    logger.error('🚨 CRITICAL: target_channel NOT CONFIGURED!')
+                    logger.error('=' * 70)
+                    logger.error('[PUBLISHER] To fix this:')
+                    logger.error('[PUBLISHER]   1. Go to admin panel: /admin/settings')
+                    logger.error('[PUBLISHER]   2. Set "Target Telegram channel" (e.g., @mychannel or -100123456789)')
+                    logger.error('[PUBLISHER]   3. Save')
+                    logger.error('[PUBLISHER] Then restart the service')
+                    logger.error('=' * 70)
                 else:
-                    logger.info(f'[PUBLISHER CYCLE] Target channel: {target_channel}')
+                    logger.info(f'✅ Target channel: {target_channel}')
                     
                     # Publish scheduled posts first
-                    logger.info(f'[PUBLISHER CYCLE {cycle_count}] Stage 1: Checking scheduled posts...')
+                    logger.info(f'[PUBLISHER CYCLE {cycle_count}] Stage 1/2: Checking scheduled posts...')
                     scheduled_published = await self.publish_scheduled_posts()
+                    logger.info(f'[PUBLISHER CYCLE {cycle_count}] └─ Result: {scheduled_published} scheduled posts published')
                     
                     # Then publish new content from sources
-                    logger.info(f'[PUBLISHER CYCLE {cycle_count}] Stage 2: Publishing new content...')
+                    logger.info(f'[PUBLISHER CYCLE {cycle_count}] Stage 2/2: Publishing new content...')
                     published = await self.run_publish_cycle(max_posts=2)
+                    logger.info(f'[PUBLISHER CYCLE {cycle_count}] └─ Result: {published} from sources published')
                     
-                    logger.info(f'[PUBLISHER CYCLE {cycle_count}] COMPLETE: {published} from sources, {scheduled_published} scheduled posts')
+                    logger.info('=' * 70)
+                    logger.info(f'[PUBLISHER CYCLE {cycle_count}] CYCLE COMPLETE:')
+                    logger.info(f'├─ From sources: {published}')
+                    logger.info(f'├─ Scheduled: {scheduled_published}')
+                    logger.info(f'└─ Total: {published + scheduled_published}')
+                    logger.info('=' * 70)
                 
             except Exception as e:
-                logger.error(f'[PUBLISHER CYCLE {cycle_count}] EXCEPTION: {e}', exc_info=True)
+                logger.error(f'[PUBLISHER CYCLE {cycle_count}] 💥 EXCEPTION: {e}', exc_info=True)
 
             interval = self._get_publish_interval()
-            logger.info(f'[PUBLISHER CYCLE {cycle_count}] Next cycle in {interval}s...')
+            logger.info(f'⏱️  [WAIT] Next publishing cycle in {interval}s ({interval//60}m)...')
             await asyncio.sleep(interval)
 
 
