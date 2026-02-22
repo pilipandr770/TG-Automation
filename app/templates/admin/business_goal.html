@@ -51,6 +51,42 @@
                 </div>
             </div>
             
+            <!-- Reset All Data Section -->
+            <div class="card border-danger mt-4">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-exclamation-triangle"></i> 🗑️ Полный сброс (Опасно!)
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-3">
+                        Удалить ВСЕ данные приложения и начать с чистого листа.
+                        Это действие необратимо!
+                    </p>
+                    
+                    <div class="alert alert-danger">
+                        <strong>⚠️ ВНИМАНИЕ!</strong><br>
+                        При полном сбросе будут удалены:
+                        <ul class="mb-0 mt-2">
+                            <li>✗ Все найденные каналы и группы</li>
+                            <li>✗ Все контакты (потенциальные клиенты)</li>
+                            <li>✗ Все ключевые слова для поиска</li>
+                            <li>✗ Все настройки приложения</li>
+                            <li>✓ Сессия Telegram БУД​ЕТ СОХРАНЕНА</li>
+                        </ul>
+                    </div>
+                    
+                    <form method="POST" action="{{ url_for('admin.reset_all_data') }}" onsubmit="return confirmReset();" class="mt-3">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" id="confirm_reset" name="confirm_reset" value="">
+                        
+                        <button type="button" id="reset_btn" class="btn btn-danger btn-lg">
+                            <i class="bi bi-exclamation-circle"></i> Начать полный сброс
+                        </button>
+                    </form>
+                </div>
+            </div>
+            
             <!-- Generated Keywords Section -->
             {% if keywords %}
             <div class="card border-success">
@@ -194,7 +230,6 @@
                     </div>
                 </div>
             </div>
-            {% endif %}
         </div>
         
         <!-- Info Sidebar -->
@@ -255,4 +290,53 @@
     padding: 0.5rem 0.8rem;
 }
 </style>
+
+<script>
+// Confirmation for dangerous reset
+function confirmReset() {
+    if (!document.getElementById('reset_btn')) return false;
+    
+    // First click - ask for confirmation
+    const confirmed = confirm(
+        '⚠️ ВНИМАНИЕ! ЭТО ДЕЙСТВИЕ НЕОБРАТИМО!\n\n' +
+        'Будут удалены:\n' +
+        '• Все найденные каналы\n' +
+        '• Все контакты\n' +
+        '• Все ключевые слова\n' +
+        '• Все настройки\n\n' +
+        'Сессия Telegram будет сохранена.\n\n' +
+        'Вы действительно хотите продолжить?'
+    );
+    
+    if (!confirmed) return false;
+    
+    // Second confirmation - double check
+    const final = confirm(
+        'Это последнее предупреждение!\n\n' +
+        'Все данные будут удалены. Вы уверены?'
+    );
+    
+    if (!final) return false;
+    
+    // Set confirm flag and submit
+    document.getElementById('confirm_reset').value = 'yes';
+    return true;
+}
+
+// Make button clickable
+document.addEventListener('DOMContentLoaded', function() {
+    const btn = document.getElementById('reset_btn');
+    if (btn) {
+        btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            if (confirmReset()) {
+                // Find the form and submit it
+                const form = btn.closest('form');
+                if (form) form.submit();
+            }
+        });
+    }
+});
+</script>
+
 {% endblock %}

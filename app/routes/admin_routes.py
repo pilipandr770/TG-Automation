@@ -1066,6 +1066,115 @@ def business_goal():
         return redirect(url_for('admin.dashboard'))
 
 
+@admin_bp.route('/reset-all-data', methods=['POST'])
+@login_required
+def reset_all_data():
+    """
+    Dangerous: Reset ALL data (contacts, channels, keywords, config).
+    Keep only Telegram session and user accounts.
+    """
+    try:
+        from app.models import Contact, DiscoveredChannel, SearchKeyword, AppConfig
+        
+        logger.warning('=' * 70)
+        logger.warning('[RESET] User requested full data reset')
+        logger.warning('=' * 70)
+        
+        # Confirm reset
+        confirm = request.form.get('confirm_reset', '').lower() == 'yes'
+        if not confirm:
+            flash('Сброс отменён. Пожалуйста, подтвердите действие.', 'warning')
+            return redirect(url_for('admin.business_goal'))
+        
+        stats = {
+            'contacts': 0,
+            'channels': 0,
+            'keywords': 0,
+            'config': 0,
+        }
+        
+        # 1. Delete all contacts
+        try:
+            stats['contacts'] = Contact.query.count()
+            Contact.query.delete()
+            logger.info(f'✓ Deleted {stats["contacts"]} contacts')
+        except Exception as e:
+            logger.error(f'Error deleting contacts: {e}')
+        
+        # 2. Delete all discovered channels
+        try:
+            stats['channels'] = DiscoveredChannel.query.count()
+            DiscoveredChannel.query.delete()
+            logger.info(f'✓ Deleted {stats["channels"]} discovered channels')
+        except Exception as e:
+            logger.error(f'Error deleting channels: {e}')
+        
+        # 3. Delete all search keywords
+        try:
+            stats['keywords'] = SearchKeyword.query.count()
+            SearchKeyword.query.delete()
+            logger.info(f'✓ Deleted {stats["keywords"]} search keywords')
+        except Exception as e:
+            logger.error(f'Error deleting keywords: {e}')
+        
+        # 4. Delete most AppConfig EXCEPT Telegram-related ones
+        # Keep: api_id, api_hash, phone_number (used for session management)
+        protected_keys = [
+            'telegram_api_id',
+            'telegram_api_hash', 
+            'telegram_phone',
+            'telegram_session_string',
+        ]
+        
+        try:
+            # Delete all config except protected ones
+            config_to_delete = AppConfig.query.filter(
+                ~AppConfig.key.in_(protected_keys)
+            ).all()
+            stats['config'] = len(config_to_delete)
+            
+            for cfg in config_to_delete:
+                logger.info(f'  Deleting config: {cfg.key}')
+                db.session.delete(cfg)
+            
+            logger.info(f'✓ Deleted {stats["config"]} config entries (kept Telegram session keys)')
+        except Exception as e:
+            logger.error(f'Error deleting config: {e}')
+        
+        # Commit all changes
+        try:
+            db.session.commit()
+            logger.warning('=' * 70)
+            logger.warning(f'[RESET COMPLETE] Success!')
+            logger.warning(f'  Contacts: {stats["contacts"]} deleted')
+            logger.warning(f'  Channels: {stats["channels"]} deleted')
+            logger.warning(f'  Keywords: {stats["keywords"]} deleted')
+            logger.warning(f'  Config: {stats["config"]} deleted')
+            logger.warning(f'  Telegram session: PRESERVED ✓')
+            logger.warning('=' * 70)
+            
+            flash(
+                f'✅ Полный сброс данных! '
+                f'Удалено: {stats["contacts"]} контактов, '
+                f'{stats["channels"]} каналов, '
+                f'{stats["keywords"]} ключевых слов, '
+                f'{stats["config"]} настроек. '
+                f'Сессия Telegram сохранена!',
+                'success'
+            )
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f'Failed to commit reset: {e}')
+            flash(f'Ошибка при сбросе: {str(e)[:100]}', 'danger')
+        
+        return redirect(url_for('admin.business_goal'))
+    
+    except Exception as e:
+        logger.exception(f'Unexpected error in reset_all_data: {e}')
+        flash(f'Критическая ошибка: {str(e)[:100]}', 'danger')
+        return redirect(url_for('admin.dashboard'))
+
+
 # ─── Logs ─────────────────────────────────────────────────────────────────────
 
 @admin_bp.route('/logs')
