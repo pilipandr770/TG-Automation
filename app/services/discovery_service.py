@@ -648,6 +648,33 @@ Reply with ONLY keywords, one per line, no numbering'''
             if channels_found_this_cycle == 0:
                 kw.cycles_without_new += 1
                 logger.info(f'[TRACK] "{kw.keyword}" - no new channels ({kw.cycles_without_new} cycles)')
+        
+        # ══════════════════════════════════════════════════════════════════
+        # DIAGNOSTIC: Show what was actually saved to DB
+        # ══════════════════════════════════════════════════════════════════
+        try:
+            db.session.commit()
+            
+            # Count channels in various states
+            total_channels = DiscoveredChannel.query.count()
+            joined_channels = DiscoveredChannel.query.filter_by(is_joined=True).count()
+            not_joined = DiscoveredChannel.query.filter_by(is_joined=False).count()
+            
+            logger.info('')
+            logger.info('🔍 [DIAGNOSTIC] Discovery Cycle DB State:')
+            logger.info(f'  Total channels in DB: {total_channels}')
+            logger.info(f'  ✅ Joined channels: {joined_channels}')
+            logger.info(f'  ❌ Not joined: {not_joined}')
+            
+            if joined_channels > 0:
+                joined_list = DiscoveredChannel.query.filter_by(is_joined=True).all()
+                logger.info(f'  Recently joined channels:')
+                for ch in joined_list[-5:]:
+                    logger.info(f'    - {ch.title} (ID: {ch.telegram_id}, timestamp: {ch.join_date})')
+            
+        except Exception as diag_error:
+            logger.error(f'[DIAGNOSTIC ERROR] {diag_error}')
+            db.session.rollback()
             else:
                 kw.cycles_without_new = 0
                 logger.info(f'[TRACK] "{kw.keyword}" - found {channels_found_this_cycle} new channels')
