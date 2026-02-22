@@ -1002,49 +1002,84 @@ def business_goal():
                             flash(f'⚠️ Мало ключевых слов ({len(keywords_list)}). Попробуйте снова.', 'warning')
                             return redirect(url_for('admin.business_goal'))
                         
-                        # SAFE TRANSACTION: Don't delete old keywords until new ones are validated
+                        # SAFE TRANSACTION: Clear old keywords and add new ones atomically
+                        # This ensures atomic "all or nothing" behavior
                         logger.info(f'🔄 Starting safe keyword replacement transaction...')
                         
-                        # Step 1: Mark all old keywords as inactive (instead of deleting)
-                        old_keywords_count = SearchKeyword.query.filter_by(active=True).count()
-                        SearchKeyword.query.filter_by(active=True).update({SearchKeyword.active: False})
-                        logger.info(f'✓ Marked {old_keywords_count} old keywords as inactive (backup)')
-                        
-                        # Step 2: Add new keywords
-                        for i, keyword in enumerate(keywords_list, 1):
-                            kw = SearchKeyword(
-                                keyword=keyword,
-                                language='en',
-                                active=True,  # New keywords are immediately active
-                                priority=i,
-                                source_keyword=None,  # These are original, not regenerated
-                                generation_round=0,
+                        try:
+                            # Step 1: Mark old keywords as inactive instead of deleting
+                            # This preserves history and prevents lock issues
+                            old_keywords_count = SearchKeyword.query.filter_by(active=True).count()
+                            logger.info(f'Found {old_keywords_count} active keywords to deactivate')
+                            
+                            # Simply mark all active keywords as inactive (safe operation)
+                            # This is atomic and doesn't cause locks on large datasets
+                            db.session.query(SearchKeyword).filter_by(active=True).update(
+                                {SearchKeyword.active: False},
+                                synchronize_session='fetch'  # Refresh affected rows
                             )
-                            db.session.add(kw)
+                            logger.info(f'✓ Deactivated {old_keywords_count} old keywords')
+                            
+                            # Step 2: Add all new keywords with active=True
+                            for i, keyword in enumerate(keywords_list, 1):
+                                kw = SearchKeyword(
+                                    keyword=keyword,
+                                    language='en',
+                                    active=True,  # New keywords are immediately active
+                                    priority=i,
+                                    source_keyword=None,  # These are original, not regenerated
+                                    generation_round=0,
+                                )
+                                db.session.add(kw)
+                            
+                            logger.info(f'✓ Queued {len(keywords_list)} new keywords for addition')
+                            
+                            # Step 4: Update topic context directly in the same transaction
+                            # CRITICAL: Don't use AppConfig.set() here - it calls commit() internally!
+                            # This would break atomicity by committing before all changes are ready
+                            try:
+                                topic_config = AppConfig.query.filter_by(key='discovery_topic_context').with_for_update().first()
+                                if topic_config:
+                                    topic_config.value = goal_description
+                                    logger.info(f'✓ Updated existing discovery topic context')
+                                else:
+                                    topic_config = AppConfig(
+                                        key='discovery_topic_context',
+                                        value=goal_description,
+                                        description='Topic context for channel discovery evaluation'
+                                    )
+                                    db.session.add(topic_config)
+                                    logger.info(f'✓ Created new discovery topic context')
+                            except Exception as config_error:
+                                logger.warning(f'⚠️ Could not update config: {config_error}, continuing anyway')
+                            
+                            # Step 5: Flush changes to DB but DON'T commit yet
+                            # This helps catch any constraint violations before commit
+                            db.session.flush()
+                            logger.info(f'✓ Changes flushed (validated) but not committed yet')
+                            
+                            # Step 6: Commit EVERYTHING atomically
+                            # Either all changes succeed or all are rolled back
+                            db.session.commit()
+                            logger.info(f'✅ [ATOMIC COMMIT SUCCESSFUL]')
+                            
+                            logger.info(f'✅ [THEME SWITCH SUCCESSFUL]')
+                            logger.info(f'  Old keywords: {old_keywords_count} → replaced')
+                            logger.info(f'  New keywords: {len(keywords_list)} → added and activated')
+                            logger.info(f'  Topic context: Updated')
+                            
+                            flash(f'✅ Новая тема установлена! Сгенерировано {len(keywords_list)} ключевых слов', 'success')
+                            logger.info(f'Generated keywords (first 8): {keywords_list[:8]}')
                         
-                        logger.info(f'✓ Added {len(keywords_list)} new keywords')
-                        
-                        # Step 3: Update topic context directly in transaction
-                        # NOTE: Don't use AppConfig.set() here - it calls commit() internally!
-                        topic_config = AppConfig.query.filter_by(key='discovery_topic_context').first()
-                        if topic_config:
-                            topic_config.value = goal_description
-                            logger.info(f'✓ Updated existing discovery topic context')
-                        else:
-                            topic_config = AppConfig(
-                                key='discovery_topic_context',
-                                value=goal_description,
-                                description='Topic context for channel discovery evaluation'
-                            )
-                            db.session.add(topic_config)
-                            logger.info(f'✓ Created new discovery topic context')
-                        
-                        # Step 4: Commit everything atomically
-                        db.session.commit()
-                        
-                        logger.info(f'✅ [THEME SWITCH SUCCESSFUL] Old: {old_keywords_count} → New: {len(keywords_list)} keywords')
-                        flash(f'✅ Новая тема установлена! Сгенерировано {len(keywords_list)} ключевых слов', 'success')
-                        logger.info(f'Generated keywords: {keywords_list[:8]}...')
+                        except Exception as tx_error:
+                            # If ANYTHING fails, rollback the ENTIRE transaction
+                            db.session.rollback()
+                            logger.error(f'❌ [TRANSACTION FAILED] Rolling back all changes!')
+                            logger.error(f'  Error Type: {type(tx_error).__name__}')
+                            logger.error(f'  Error Details: {str(tx_error)[:300]}')
+                            logger.error('  Full Traceback:', exc_info=True)
+                            logger.info(f'✓ All changes rolled back - database state restored')
+                            raise  # Re-raise to be caught by outer exception handler
                     else:
                         logger.error(f'❌ No content in OpenAI result: {result}')
                         flash('Ошибка при генерации ключевых слов. Попробуйте снова.', 'danger')

@@ -204,15 +204,24 @@ class CoordinatorService:
                 await asyncio.sleep(pause_duration)
                 
             except Exception as e:
-                logger.error(f'[COORDINATOR ERROR] Cycle failed with unhandled exception!', exc_info=True)
-                logger.error(f'  Exception type: {type(e).__name__}')
-                logger.error(f'  Exception message: {str(e)[:300]}')
+                # CRITICAL: All duration variables are already initialized,
+                # so this outer exception handler can safely access all of them
+                logger.error('=' * 70)
+                logger.error(f'[COORDINATOR CRITICAL ERROR] Cycle #{self.cycle_count} failed!')
+                logger.error(f'Exception Type: {type(e).__name__}')
+                logger.error(f'Exception Message: {str(e)[:300]}')
+                logger.error('FULL TRACEBACK:', exc_info=True)
+                logger.error('=' * 70)
                 logger.warning('[COORDINATOR] Waiting 30s before retry...')
-                logger.info(f'  Cycle #{self.cycle_count} timings:')
-                logger.info(f'    Discovery:    {discovery_duration:.1f}s')
-                logger.info(f'    Audience:     {audience_duration:.1f}s')
-                logger.info(f'    Publisher:    {publisher_duration:.1f}s')
-                logger.info(f'    Invitations:  {invitation_duration:.1f}s')
+                logger.info(f'Cycle #{self.cycle_count} timings before crash:')
+                logger.info(f'  Discovery:    {discovery_duration:.1f}s')
+                logger.info(f'  Audience:     {audience_duration:.1f}s')
+                logger.info(f'  Conversation: (event-driven)')
+                logger.info(f'  Publisher:    {publisher_duration:.1f}s')
+                logger.info(f'  Invitations:  {invitation_duration:.1f}s')
+                logger.warning(f'Total time before failure: {(datetime.utcnow() - cycle_start).total_seconds():.1f}s')
+                logger.warning('[COORDINATOR] System is resilient - continuing to next cycle')
+                logger.info('=' * 70)
                 await asyncio.sleep(30)
 
 
