@@ -319,7 +319,13 @@ class AudienceService:
         logger.info(f'✅ [CRITERIA RESULT] Found {len(criteria_list)} active audience criteria')
         if criteria_list:
             for crit in criteria_list:
-                logger.info(f'  - {crit.name}: {crit.keywords}')
+                keywords = crit.keywords or '(no keywords)'
+                logger.info(f'  📋 Criteria: "{crit.name}"')
+                logger.info(f'     ├─ Keywords: {keywords}')
+                logger.info(f'     ├─ Min confidence: {crit.min_confidence}')
+                logger.info(f'     └─ Status: active')
+        else:
+            logger.warning('⚠️  [NO CRITERIA] No active audience criteria found!')
         
         if not criteria_list:
             logger.info('⚠️  [SKIP] No active audience criteria — skipping scan')
@@ -340,12 +346,22 @@ class AudienceService:
             stats['messages_read'] += len(messages)
             
             logger.info(f'[SCAN CHANNEL] Read {len(messages)} messages from {channel.title or channel.telegram_id}')
+            
+            if not messages:
+                logger.info(f'[SCAN CHANNEL] No messages found in {channel.title}')
+                channel.last_scanned_at = datetime.utcnow()
+                continue
 
             # Update last scanned
             channel.last_scanned_at = datetime.utcnow()
+            
+            pre_filter_passed = 0
+            users_processed = 0
 
             for msg_data in messages:
                 user_id = msg_data['user_id']
+                username = msg_data.get('username') or msg_data.get('first_name') or f'ID{user_id}'
+                users_processed += 1
 
                 # Skip already-known contacts
                 existing = Contact.query.filter_by(telegram_id=user_id).first()
@@ -354,11 +370,15 @@ class AudienceService:
 
                 for criteria in criteria_list:
                     # Pre-filter
-                    if not self._pre_filter(msg_data['message_text'], criteria):
-                        logger.debug(f'[PRE-FILTER] Skipped {msg_data.get("username", user_id)} - keywords not matched')
+                    pre_filter_result = self._pre_filter(msg_data['message_text'], criteria)
+                    
+                    if not pre_filter_result:
+                        logger.debug(f'[PRE-FILTER REJECT] @{username} - keywords not matched for criteria "{criteria.name}"')
                         continue
-
-                    logger.info(f'[ANALYZING] User @{msg_data.get("username", user_id)} - Message preview: {msg_data["message_text"][:50]}...')
+                    
+                    pre_filter_passed += 1
+                    logger.info(f'[PRE-FILTER PASS] @{username} passed criteria "{criteria.name}"')
+                    logger.info(f'[ANALYZING] User @{username} - Message: {msg_data["message_text"][:80]}...')
                     
                     # Analyze and categorize
                     evaluation = await self.analyze_user(
@@ -414,6 +434,15 @@ class AudienceService:
                     break
 
             db.session.commit()
+            
+            # Show pre-filter stats for this channel
+            logger.info(f'\n[CHANNEL STATS] {channel.title}:')
+            logger.info(f'  📊 Total messages: {len(messages)}')
+            logger.info(f'  👥 Unique users: {users_processed}')
+            logger.info(f'  ✅ Passed pre-filter: {pre_filter_passed}')
+            logger.info(f'  📝 Analyzed: {stats["users_analyzed"]}')
+            logger.info(f'  💾 Saved contacts: {stats["saved_contacts"]}')
+            
             # Small delay between channels
             await asyncio.sleep(1)
 
