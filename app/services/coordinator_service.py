@@ -73,6 +73,14 @@ class CoordinatorService:
             self.cycle_count += 1
             cycle_start = datetime.utcnow()
             
+            # Initialize all duration variables at start of cycle
+            # This prevents NameError if a module crashes before its duration is set
+            discovery_duration = 0
+            audience_duration = 0
+            conversation_duration = 0
+            publisher_duration = 0
+            invitation_duration = 0
+            
             logger.info('')
             logger.info('=' * 70)
             logger.info(f'[COORDINATOR CYCLE #{self.cycle_count}] Started at {cycle_start.isoformat()}')
@@ -92,8 +100,9 @@ class CoordinatorService:
                     logger.info(f'✅ [DISCOVERY COMPLETE] Stats: {discovery_stats}')
                     logger.info(f'   ⏱️  Duration: {discovery_duration:.1f}s')
                 except Exception as e:
-                    logger.error(f'❌ [DISCOVERY ERROR] {type(e).__name__}: {str(e)[:100]}', exc_info=False)
                     discovery_duration = (datetime.utcnow() - discovery_start).total_seconds()
+                    logger.error(f'❌ [DISCOVERY ERROR] {type(e).__name__}: {str(e)[:200]}', exc_info=True)
+                    logger.warning(f'   ⏱️  Duration before crash: {discovery_duration:.1f}s')
                 
                 # Brief pause between modules
                 logger.info('⏸️  [COORDINATOR] Pause 5s before Audience scan...')
@@ -112,8 +121,9 @@ class CoordinatorService:
                     logger.info(f'✅ [AUDIENCE COMPLETE] Stats: {audience_stats}')
                     logger.info(f'   ⏱️  Duration: {audience_duration:.1f}s')
                 except Exception as e:
-                    logger.error(f'❌ [AUDIENCE ERROR] {type(e).__name__}: {str(e)[:100]}', exc_info=False)
                     audience_duration = (datetime.utcnow() - audience_start).total_seconds()
+                    logger.error(f'❌ [AUDIENCE ERROR] {type(e).__name__}: {str(e)[:200]}', exc_info=True)
+                    logger.warning(f'   ⏱️  Duration before crash: {audience_duration:.1f}s')
                 
                 # Brief pause
                 logger.info('⏸️  [COORDINATOR] Pause 5s before Conversation check...')
@@ -145,8 +155,9 @@ class CoordinatorService:
                     logger.info(f'✅ [PUBLISHER COMPLETE] Stats: {publisher_stats}')
                     logger.info(f'   ⏱️  Duration: {publisher_duration:.1f}s')
                 except Exception as e:
-                    logger.error(f'❌ [PUBLISHER ERROR] {type(e).__name__}: {str(e)[:100]}', exc_info=False)
                     publisher_duration = (datetime.utcnow() - publisher_start).total_seconds()
+                    logger.error(f'❌ [PUBLISHER ERROR] {type(e).__name__}: {str(e)[:200]}', exc_info=True)
+                    logger.warning(f'   ⏱️  Duration before crash: {publisher_duration:.1f}s')
                 
                 # Brief pause
                 logger.info('⏸️  [COORDINATOR] Pause 5s before Invitations...')
@@ -165,8 +176,9 @@ class CoordinatorService:
                     logger.info(f'✅ [INVITATIONS COMPLETE] Stats: {invitation_stats}')
                     logger.info(f'   ⏱️  Duration: {invitation_duration:.1f}s')
                 except Exception as e:
-                    logger.error(f'❌ [INVITATIONS ERROR] {type(e).__name__}: {str(e)[:100]}', exc_info=False)
                     invitation_duration = (datetime.utcnow() - invitation_start).total_seconds()
+                    logger.error(f'❌ [INVITATIONS ERROR] {type(e).__name__}: {str(e)[:200]}', exc_info=True)
+                    logger.warning(f'   ⏱️  Duration before crash: {invitation_duration:.1f}s')
                 
                 # ──────────────────────────────────────────────────────────
                 # CYCLE COMPLETE
@@ -192,8 +204,15 @@ class CoordinatorService:
                 await asyncio.sleep(pause_duration)
                 
             except Exception as e:
-                logger.error(f'[COORDINATOR ERROR] Cycle failed: {type(e).__name__}: {str(e)}', exc_info=True)
+                logger.error(f'[COORDINATOR ERROR] Cycle failed with unhandled exception!', exc_info=True)
+                logger.error(f'  Exception type: {type(e).__name__}')
+                logger.error(f'  Exception message: {str(e)[:300]}')
                 logger.warning('[COORDINATOR] Waiting 30s before retry...')
+                logger.info(f'  Cycle #{self.cycle_count} timings:')
+                logger.info(f'    Discovery:    {discovery_duration:.1f}s')
+                logger.info(f'    Audience:     {audience_duration:.1f}s')
+                logger.info(f'    Publisher:    {publisher_duration:.1f}s')
+                logger.info(f'    Invitations:  {invitation_duration:.1f}s')
                 await asyncio.sleep(30)
 
 

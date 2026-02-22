@@ -1024,10 +1024,20 @@ def business_goal():
                         
                         logger.info(f'✓ Added {len(keywords_list)} new keywords')
                         
-                        # Step 3: Set discovery topic context
-                        AppConfig.set('discovery_topic_context', goal_description,
-                                     'Topic context for channel discovery evaluation')
-                        logger.info(f'✓ Updated discovery topic context')
+                        # Step 3: Update topic context directly in transaction
+                        # NOTE: Don't use AppConfig.set() here - it calls commit() internally!
+                        topic_config = AppConfig.query.filter_by(key='discovery_topic_context').first()
+                        if topic_config:
+                            topic_config.value = goal_description
+                            logger.info(f'✓ Updated existing discovery topic context')
+                        else:
+                            topic_config = AppConfig(
+                                key='discovery_topic_context',
+                                value=goal_description,
+                                description='Topic context for channel discovery evaluation'
+                            )
+                            db.session.add(topic_config)
+                            logger.info(f'✓ Created new discovery topic context')
                         
                         # Step 4: Commit everything atomically
                         db.session.commit()
