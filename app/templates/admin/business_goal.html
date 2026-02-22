@@ -86,6 +86,13 @@
                         <strong>Совет:</strong> Если результаты поиска неудовлетворительны, 
                         уточните описание бизнес-цели и генерируйте ключевые слова заново.
                     </div>
+                    
+                    <div class="alert alert-success small" style="border-left: 3px solid #198754;">
+                        <i class="bi bi-shield-check"></i>
+                        <strong>✓ Безопасное обновление:</strong> 
+                        При смене темы старые ключевые слова сохраняются как резервная копия. 
+                        Если произойдёт ошибка при генерации новых слов, система автоматически восстановит старые.
+                    </div>
                 </div>
             </div>
             {% else %}
@@ -98,6 +105,93 @@
                     <p class="small text-muted">
                         Опишите вашу бизнес-цель выше, сохраните её и нажмите "Генерировать ключевые слова"
                     </p>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+        
+        <!-- Info Sidebar -->
+        <div class="col-lg-4">
+            <div class="card mb-4 border-info">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0"><i class="bi bi-info-circle"></i> Как это работает?</h5>
+                </div>
+                <div class="card-body">
+                    <ol class="small">
+                        <li class="mb-2">
+                            <strong>Опишите цель:</strong><br>
+                            Введите описание вашего бизнеса или того, что вы продаёте
+                        </li>
+                        <li class="mb-2">
+                            <strong>Генерируйте слова:</strong><br>
+                            ИИ автоматически создаст 20+ оптимальных ключевых слов
+                        </li>
+                        <li class="mb-2">
+                            <strong>Автопоиск:</strong><br>
+                            Приложение ищет каналы по этим словам каждые 5 минут
+                        </li>
+                        <li>
+                            <strong>Присоединение:</strong><br>
+                            Автоматически присоединяется к релевантным каналам
+                        </li>
+                    </ol>
+                </div>
+            </div>
+            
+            <div class="card border-secondary">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0"><i class="bi bi-lightbulb"></i> Примеры</h5>
+                </div>
+                <div class="card-body">
+                    <div class="small">
+                        <p class="mb-2"><strong>Эротический контент:</strong></p>
+                        <p class="text-muted mb-3">"Продажа эротического контента для взрослых, подписка на XXX материалы"</p>
+                        
+                        <p class="mb-2"><strong>Авто:</strong></p>
+                        <p class="text-muted mb-3">"Продажа подержанных автомобилей, подбор авто, автокредиты"</p>
+                        
+                        <p class="mb-2"><strong>Курсы:</strong></p>
+                        <p class="text-muted mb-3">"Онлайн-курсы по машинному обучению, ChatGPT, нейросети"</p>
+                        
+                        <p class="mb-2"><strong>Крипто:</strong></p>
+                        <p class="text-muted">"Торговля криптовалютой, биржи, прибыльные инвестиции"</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card border-danger mt-3">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="mb-0"><i class="bi bi-exclamation-triangle"></i> Что происходит при смене темы?</h5>
+                </div>
+                <div class="card-body">
+                    <ol class="small">
+                        <li class="mb-2">
+                            <strong>Сохранение:</strong><br>
+                            Старые ключевые слова помечаются как неактивные (резервная копия)
+                        </li>
+                        <li class="mb-2">
+                            <strong>Генерация:</strong><br>
+                            OpenAI создаёт новые ключевые слова для новой темы
+                        </li>
+                        <li class="mb-2">
+                            <strong>Активация:</strong><br>
+                            Новые слова становятся активными для поиска
+                        </li>
+                        <li class="mb-2">
+                            <strong>Защита:</strong><br>
+                            Если что-то пошло неправильно, старые слова автоматически восстанавливаются
+                        </li>
+                        <li>
+                            <strong>Перезапуск:</strong><br>
+                            Discovery Service перезагружает активные слова в течение 5 минут
+                        </li>
+                    </ol>
+                    
+                    <div class="alert alert-info mt-3 small">
+                        <i class="bi bi-info-circle"></i>
+                        <strong>Важно:</strong> Сервис должен работать без перерывов при смене темы.
+                        Если вы видите ошибки в логах - проверьте подключение к OpenAI API.
+                    </div>
                 </div>
             </div>
             {% endif %}

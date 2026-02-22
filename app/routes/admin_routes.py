@@ -996,34 +996,54 @@ def business_goal():
                         
                         logger.info(f'Parsed {len(keywords_list)} keywords')
                         
-                        # Clear old keywords and add new ones
-                        SearchKeyword.query.delete()
+                        # Validate parsed keywords before any changes
+                        if len(keywords_list) < 5:
+                            logger.warning(f'⚠️ Only {len(keywords_list)} keywords parsed (expected 15-25)')
+                            flash(f'⚠️ Мало ключевых слов ({len(keywords_list)}). Попробуйте снова.', 'warning')
+                            return redirect(url_for('admin.business_goal'))
                         
+                        # SAFE TRANSACTION: Don't delete old keywords until new ones are validated
+                        logger.info(f'🔄 Starting safe keyword replacement transaction...')
+                        
+                        # Step 1: Mark all old keywords as inactive (instead of deleting)
+                        old_keywords_count = SearchKeyword.query.filter_by(active=True).count()
+                        SearchKeyword.query.filter_by(active=True).update({SearchKeyword.active: False})
+                        logger.info(f'✓ Marked {old_keywords_count} old keywords as inactive (backup)')
+                        
+                        # Step 2: Add new keywords
                         for i, keyword in enumerate(keywords_list, 1):
                             kw = SearchKeyword(
                                 keyword=keyword,
                                 language='en',
-                                active=True,
+                                active=True,  # New keywords are immediately active
                                 priority=i,
+                                source_keyword=None,  # These are original, not regenerated
+                                generation_round=0,
                             )
                             db.session.add(kw)
                         
-                        # CRITICAL: Set topic context for channel evaluation
-                        # This allows discovery_service to intelligently filter channels
+                        logger.info(f'✓ Added {len(keywords_list)} new keywords')
+                        
+                        # Step 3: Set discovery topic context
                         AppConfig.set('discovery_topic_context', goal_description,
                                      'Topic context for channel discovery evaluation')
+                        logger.info(f'✓ Updated discovery topic context')
                         
+                        # Step 4: Commit everything atomically
                         db.session.commit()
                         
-                        flash(f'✓ Сгенерировано {len(keywords_list)} ключевых слов для поиска!', 'success')
-                        logger.info(f'Generated {len(keywords_list)} keywords: {keywords_list[:5]}...')
+                        logger.info(f'✅ [THEME SWITCH SUCCESSFUL] Old: {old_keywords_count} → New: {len(keywords_list)} keywords')
+                        flash(f'✅ Новая тема установлена! Сгенерировано {len(keywords_list)} ключевых слов', 'success')
+                        logger.info(f'Generated keywords: {keywords_list[:8]}...')
                     else:
-                        logger.error(f'No content in OpenAI result: {result}')
+                        logger.error(f'❌ No content in OpenAI result: {result}')
                         flash('Ошибка при генерации ключевых слов. Попробуйте снова.', 'danger')
                 
                 except Exception as e:
-                    logger.exception(f'Error generating keywords: {e}')
-                    flash(f'Ошибка: {str(e)[:100]}', 'danger')
+                    logger.exception(f'❌ Error generating keywords: {e}')
+                    db.session.rollback()  # Rollback on ANY error
+                    logger.info(f'🔄 Transaction rolled back - old keywords restored')
+                    flash(f'❌ Ошибка при смене темы: {str(e)[:100]}', 'danger')
                 
                 return redirect(url_for('admin.business_goal'))
         

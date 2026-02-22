@@ -562,9 +562,25 @@ Reply with ONLY keywords, one per line, no numbering'''
                 f'remaining: {limit_status["remaining_capacity"]}'
             )
 
+
         keywords = SearchKeyword.query.filter_by(active=True).order_by(
             SearchKeyword.priority.desc()
         ).all()
+        
+        # CRITICAL: Check if keywords exist - don't proceed if empty
+        if not keywords or len(keywords) == 0:
+            logger.warning('=' * 70)
+            logger.warning('[DISCOVERY] ⚠️  NO ACTIVE KEYWORDS FOUND!')
+            logger.warning('[DISCOVERY] Please generate keywords from admin panel:')
+            logger.warning('[DISCOVERY]   1. Go to Admin → Business Goal')
+            logger.warning('[DISCOVERY]   2. Describe your business goal')
+            logger.warning('[DISCOVERY]   3. Click "Generate Keywords"')
+            logger.warning('[DISCOVERY] Waiting 30 seconds before retry...')
+            logger.warning('=' * 70)
+            stats['keywords_processed'] = 0
+            stats['error'] = 'No active keywords configured'
+            await asyncio.sleep(30)
+            return stats
         
         logger.info(f'[KEYWORDS] Processing {len(keywords)} keywords: {[kw.keyword for kw in keywords]}')
 
