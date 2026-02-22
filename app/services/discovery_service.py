@@ -648,7 +648,10 @@ Reply with ONLY keywords, one per line, no numbering'''
             if channels_found_this_cycle == 0:
                 kw.cycles_without_new += 1
                 logger.info(f'[TRACK] "{kw.keyword}" - no new channels ({kw.cycles_without_new} cycles)')
-        
+            else:
+                kw.cycles_without_new = 0
+                logger.info(f'[TRACK] "{kw.keyword}" - found {channels_found_this_cycle} new channels')
+
         # ══════════════════════════════════════════════════════════════════
         # DIAGNOSTIC: Show what was actually saved to DB
         # ══════════════════════════════════════════════════════════════════
@@ -675,11 +678,6 @@ Reply with ONLY keywords, one per line, no numbering'''
         except Exception as diag_error:
             logger.error(f'[DIAGNOSTIC ERROR] {diag_error}')
             db.session.rollback()
-            else:
-                kw.cycles_without_new = 0
-                logger.info(f'[TRACK] "{kw.keyword}" - found {channels_found_this_cycle} new channels')
-
-            db.session.commit()
 
         # Check and regenerate exhausted keywords
         logger.info('=' * 70)
