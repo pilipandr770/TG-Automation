@@ -88,6 +88,7 @@ async def main():
     from app.services.invitation_service import get_invitation_service
     from app.services.publisher_service import get_publisher_service
     from app.services.conversation_service import get_conversation_service
+    from app.services.coordinator_service import get_coordinator_service
     from app.services.content_fetcher import ContentFetcher
 
     logger.info('📦 Creating Flask app...')
@@ -180,6 +181,10 @@ async def main():
         conversation = get_conversation_service(client_mgr, openai_service)
         logger.info('✅ Conversation service initialized')
 
+        # Create coordinator with all services
+        coordinator = get_coordinator_service(discovery, audience, conversation, publisher, invitation)
+        logger.info('✅ Coordinator service initialized')
+
         # Register event handlers for Module 5 (incoming messages, payments)
         conversation.register_handlers(client)
         logger.info('Event handlers registered.')
@@ -217,37 +222,27 @@ async def main():
         # Start background tasks
         tasks = []
 
-        # Module 1: Continuous discovery
-        logger.info('🔍 Starting Module 1: Discovery Service')
+        # ────────────────────────────────────────────────────────────────
+        # COORDINATOR: Orchestrates all 5 modules in round-robin sequence
+        # ────────────────────────────────────────────────────────────────
+        # Instead of 5 concurrent infinite loops (which interfere with each other),
+        # the coordinator runs them in strict order:
+        # 1. Discovery → 2. Audience → 3. Conversation (event-driven) → 4. Publisher → 5. Invitations
+        # Each task completes before the next starts, preventing resource contention
+        
+        logger.info('🎯 Starting Coordinator (round-robin orchestration of 5 modules)')
         tasks.append(asyncio.create_task(
-            run_with_app_context(app, discovery.run_forever)
+            run_with_app_context(app, coordinator.run_coordinator)
         ))
 
-        # Module 2: Continuous audience scanning
-        logger.info('👥 Starting Module 2: Audience Service')
-        tasks.append(asyncio.create_task(
-            run_with_app_context(app, audience.run_forever)
-        ))
-
-        # Module 3: Continuous content publishing
-        logger.info('📢 Starting Module 3: Publisher Service')
-        tasks.append(asyncio.create_task(
-            run_with_app_context(app, publisher.run_forever)
-        ))
-
-        # Module 4: Continuous invitation sending
-        logger.info('💌 Starting Module 4: Invitation Service')
-        invitation_task = asyncio.create_task(
-            run_with_app_context(app, invitation.run_forever)
-        )
-        tasks.append(invitation_task)
-
-        logger.info(f'✅ All {len(tasks)} background modules started successfully!')
-        logger.info(f'🎯 Discovery (Module 1): Searching for channels by keywords')
-        logger.info(f'👁️  Audience (Module 2): Scanning messages and analyzing contacts')
-        logger.info(f'✉️  Invitations (Module 4): Sending invitation messages')
-        logger.info(f'📝 Publisher (Module 3): Publishing content to target channel')
-        logger.info(f'💬 Conversation (Module 5): Listening for incoming private messages')
+        logger.info(f'✅ Coordinator started successfully!')
+        logger.info(f'📋 Execution sequence per cycle:')
+        logger.info(f'   1️⃣ Discovery (Module 1): Search & join channels')
+        logger.info(f'   2️⃣ Audience (Module 2): Scan & analyze contacts')
+        logger.info(f'   3️⃣ Conversation (Module 5): Listen for incoming PMs (event-driven)')
+        logger.info(f'   4️⃣ Publisher (Module 3): Publish content to channel')
+        logger.info(f'   5️⃣ Invitations (Module 4): Send PMs to contacts')
+        logger.info(f'   ↻ Repeat every 60+ seconds')
 
         # Heartbeat
         if redis_client:
