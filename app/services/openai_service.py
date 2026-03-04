@@ -29,10 +29,6 @@ class OpenAIService:
         self._client: OpenAI | None = None
 
     def _resolve_api_key(self) -> str:
-        env_key = (os.getenv('OPENAI_API_KEY') or '').strip()
-        if env_key and not env_key.startswith('sk-your-'):
-            return env_key
-
         try:
             from app.models import AppConfig
             db_key = (AppConfig.get('openai_api_key', '') or '').strip()
@@ -40,6 +36,10 @@ class OpenAIService:
                 return db_key
         except Exception as e:
             logger.warning('Failed to load OpenAI key from AppConfig: %s', e)
+
+        env_key = (os.getenv('OPENAI_API_KEY') or '').strip()
+        if env_key and not env_key.startswith('sk-your-'):
+            return env_key
 
         return env_key
 

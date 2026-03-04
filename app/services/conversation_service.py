@@ -282,14 +282,23 @@ class ConversationService:
 
             logger.info(f'Received {message_type} from {telegram_user_id}: {user_message_text[:50]}...')
 
-            # Add random delay (10 to 90 seconds) to make responses look natural
-            delay_seconds = random.uniform(10, 90)
-            logger.info(f'⏰ [DELAY] Adding {delay_seconds:.1f}s delay before generating response (simulating typing/thinking)')
-            await asyncio.sleep(delay_seconds)
-            logger.info(f'⏰ [DELAY] Delay complete, now generating response...')
+            # Add random delay to make responses look natural (configurable)
+            # Defaults are intentionally moderate for better UX in private chat.
+            delay_min = float(os.getenv('DM_REPLY_DELAY_MIN_SECONDS', '3'))
+            delay_max = float(os.getenv('DM_REPLY_DELAY_MAX_SECONDS', '15'))
+            if delay_max < delay_min:
+                delay_min, delay_max = delay_max, delay_min
 
-            # Show typing indicator
+            delay_seconds = random.uniform(delay_min, delay_max)
+            logger.info(
+                f'⏰ [DELAY] Adding {delay_seconds:.1f}s delay before response '
+                f'(range: {delay_min:.1f}-{delay_max:.1f}s)'
+            )
+
+            # Show typing indicator during delay + generation so user sees activity immediately
             async with event.client.action(conv.telegram_user_id, 'typing'):
+                await asyncio.sleep(delay_seconds)
+                logger.info(f'⏰ [DELAY] Delay complete, now generating response...')
                 # Generate AI response
                 response_text = await self.generate_response(conv, user_message_text)
 
