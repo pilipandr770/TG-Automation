@@ -11,7 +11,7 @@ services:
       DATABASE_URL: postgresql+psycopg://telegram:telegram@postgres:5432/telegram_automation
       REDIS_URL: redis://redis:6379/0
     ports:
-      - "5000:5000"
+      - "80:5000"
     volumes:
       - uploads_data:/app/app/static/uploads
       - instance_data:/app/instance
