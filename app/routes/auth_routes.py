@@ -1,5 +1,6 @@
 from flask import Blueprint, render_template, redirect, url_for, flash, request
 from flask_login import login_user, logout_user, login_required, current_user
+from sqlalchemy import or_
 from werkzeug.security import check_password_hash
 from app.models import User
 
@@ -16,7 +17,9 @@ def login():
         password = request.form.get('password', '')
         remember = request.form.get('remember', False)
 
-        user = User.query.filter_by(username=username).first()
+        user = User.query.filter(
+            or_(User.username == username, User.email == username)
+        ).first()
         if user and check_password_hash(user.password_hash, password):
             login_user(user, remember=bool(remember))
             next_page = request.args.get('next')

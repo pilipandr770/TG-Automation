@@ -81,6 +81,15 @@ def init_default_admin():
                 init_user = os.getenv('INIT_ADMIN_USER')
                 init_email = os.getenv('INIT_ADMIN_EMAIL')
                 init_pass = os.getenv('INIT_ADMIN_PASSWORD')
+
+                if not (init_user and init_email and init_pass):
+                    init_user = os.getenv('DEFAULT_ADMIN_USER', 'admin')
+                    init_email = os.getenv('DEFAULT_ADMIN_EMAIL', 'admin@example.com')
+                    init_pass = os.getenv('DEFAULT_ADMIN_PASSWORD', 'ChangeMe_2026!')
+                    logger.warning(
+                        '⚠️  INIT_ADMIN_* is not set. Using fallback default admin credentials. '
+                        'Please change the password immediately after login.'
+                    )
                 
                 if init_user and init_email and init_pass:
                     # Create admin user from environment variables
