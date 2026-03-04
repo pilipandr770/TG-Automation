@@ -1,8 +1,9 @@
 """
-WSGI entry point for Gunicorn (Production)
+WSGI entry point for Gunicorn (Production).
 
-This file is used by Render.com and other WSGI servers.
-Runs Flask web app + Telethon background worker together.
+By default, this file runs only Flask.
+Telethon should run as a separate process/container.
+Set ENABLE_EMBEDDED_TELETHON=true only for single-process local debugging.
 """
 import logging
 import os
@@ -109,16 +110,19 @@ except Exception as e:
     logger.warning(f'⚠️  Admin initialization (non-critical): {e}')
 
 
-# Start Telethon background worker in a daemon thread
-# This ensures it runs whenever the Flask app is running
-logger.info('📡 Launching Telethon worker in background thread...')
-telethon_thread = threading.Thread(
-    target=run_telethon_background,
-    daemon=True,
-    name='TelethonWorker-BGThread'
-)
-telethon_thread.start()
-logger.info('✅ Telethon worker thread started as daemon')
+# Start embedded Telethon worker only when explicitly enabled.
+enable_embedded_telethon = os.getenv('ENABLE_EMBEDDED_TELETHON', 'false').lower() == 'true'
+
+if enable_embedded_telethon:
+    logger.info('📡 ENABLE_EMBEDDED_TELETHON=true -> launching Telethon in background thread...')
+    telethon_thread = threading.Thread(
+        target=run_telethon_background,
+        daemon=True,
+        name='TelethonWorker-BGThread'
+    )
+    telethon_thread.start()
+else:
+    logger.info('Embedded Telethon disabled. Run telethon_runner.py in a separate process/container.')
 
 
 if __name__ == '__main__':

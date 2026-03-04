@@ -185,6 +185,68 @@ Render создаст:
 3. Настройте Telegram Session
 4. Telethon worker автоматически подключится (проверьте логи)
 
+## Docker (локально и VPS)
+
+Для стабильной работы запускать раздельно 3 процесса:
+- `web` (Flask + админка)
+- `telethon` (единственный long-running MTProto worker)
+- `rq-worker` (очередь задач)
+
+Также используются `postgres` и `redis`.
+
+### 1) Подготовка env
+
+1. Скопируйте `.env.docker.example` в `.env`
+2. Заполните реальные значения:
+   - `OPENAI_API_KEY`
+   - `TELEGRAM_API_ID`
+   - `TELEGRAM_API_HASH`
+   - `TELEGRAM_PHONE`
+   - `TELEGRAM_TARGET_CHANNEL`
+   - при наличии: `TELEGRAM_SESSION_STRING`
+
+### 2) Локальный запуск контейнеров
+
+```bash
+docker compose up -d --build
+```
+
+Проверка логов:
+
+```bash
+docker compose logs -f web
+docker compose logs -f telethon
+docker compose logs -f rq-worker
+```
+
+Остановка:
+
+```bash
+docker compose down
+```
+
+### 3) Первый старт после reset
+
+1. Откройте `http://localhost:5000`
+2. Войдите в админку
+3. Задайте Business Goal и сгенерируйте keywords
+4. Добавьте Audience Criteria
+5. Добавьте Invitation Templates
+6. Убедитесь, что в `telethon` логах нет ошибок авторизации
+
+### 4) Деплой на VPS (Hostinger)
+
+1. Установите Docker + Docker Compose plugin
+2. Скопируйте проект на VPS
+3. Заполните `.env`
+4. Запустите:
+
+```bash
+docker compose up -d --build
+```
+
+5. (Опционально) проксируйте `web:5000` через Nginx + HTTPS
+
 ## Project Structure
 
 ```

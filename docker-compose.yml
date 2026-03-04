@@ -1,0 +1,90 @@
+services:
+  web:
+    build: .
+    container_name: tg_automation_web
+    command: gunicorn --bind 0.0.0.0:5000 --timeout 600 --workers 1 wsgi:app
+    env_file:
+      - .env
+    environment:
+      FLASK_ENV: production
+      ENABLE_EMBEDDED_TELETHON: "false"
+      DATABASE_URL: postgresql+psycopg://telegram:telegram@postgres:5432/telegram_automation
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "5000:5000"
+    volumes:
+      - uploads_data:/app/app/static/uploads
+      - instance_data:/app/instance
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  telethon:
+    build: .
+    container_name: tg_automation_telethon
+    command: python telethon_runner.py
+    env_file:
+      - .env
+    environment:
+      FLASK_ENV: production
+      DATABASE_URL: postgresql+psycopg://telegram:telegram@postgres:5432/telegram_automation
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - uploads_data:/app/app/static/uploads
+      - instance_data:/app/instance
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  rq-worker:
+    build: .
+    container_name: tg_automation_rq
+    command: python worker.py
+    env_file:
+      - .env
+    environment:
+      FLASK_ENV: production
+      DATABASE_URL: postgresql+psycopg://telegram:telegram@postgres:5432/telegram_automation
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: tg_automation_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: tg_automation_postgres
+    environment:
+      POSTGRES_DB: telegram_automation
+      POSTGRES_USER: telegram
+      POSTGRES_PASSWORD: telegram
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telegram -d telegram_automation"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  uploads_data:
+  instance_data:

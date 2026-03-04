@@ -713,7 +713,7 @@ Reply with ONLY keywords, one per line, no numbering'''
 
         # Print final cycle summary
         logger.info('=' * 70)
-        logger.info(f'[CYCLE SUMMARY] Discovery Cycle #{cycle_count} Complete:')
+        logger.info('[CYCLE SUMMARY] Discovery cycle complete:')
         logger.info(f'├─ Keywords processed: {stats["keywords_processed"]}')
         logger.info(f'├─ Channels found: {stats["channels_found"]}')
         logger.info(f'├─ Channels evaluated: {stats["channels_evaluated"]}')

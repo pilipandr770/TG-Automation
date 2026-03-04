@@ -6,6 +6,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager
 from flask_wtf.csrf import CSRFProtect, CSRFError
 from werkzeug.security import generate_password_hash
+from sqlalchemy import text
 
 db = SQLAlchemy()
 login_manager = LoginManager()
@@ -80,7 +81,18 @@ def create_app(config_name=None):
     # Create tables
     with app.app_context():
         from app import models  # noqa: F401
-        db.create_all()
+        database_uri = app.config.get('SQLALCHEMY_DATABASE_URI', '') or ''
+
+        if database_uri.startswith('postgresql'):
+            lock_id = 735017  # Arbitrary app-level advisory lock key
+            with db.engine.begin() as connection:
+                connection.execute(text('SELECT pg_advisory_lock(:lock_id)'), {'lock_id': lock_id})
+                try:
+                    db.metadata.create_all(bind=connection)
+                finally:
+                    connection.execute(text('SELECT pg_advisory_unlock(:lock_id)'), {'lock_id': lock_id})
+        else:
+            db.create_all()
 
     # CLI commands
     register_cli_commands(app)
