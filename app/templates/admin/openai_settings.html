@@ -77,6 +77,17 @@
             <div class="mb-4">
                 <h6 class="text-muted mb-3">General Settings</h6>
                 <div class="row g-3">
+                    <div class="col-12">
+                        <label class="form-label">OpenAI API Key</label>
+                        <input type="password" name="openai_api_key"
+                               class="form-control bg-dark text-light border-secondary"
+                               placeholder="sk-proj-...">
+                        {% if settings.openai_api_key_set %}
+                        <small class="text-muted">API key is already saved. Leave empty to keep existing value.</small>
+                        {% else %}
+                        <small class="text-muted">Enter your OpenAI API key to enable keyword generation.</small>
+                        {% endif %}
+                    </div>
                     <div class="col-md-6">
                         <label class="form-label">Model</label>
                         <select name="openai_model" class="form-select bg-dark text-light border-secondary">

@@ -28,13 +28,31 @@ class OpenAIService:
         self._api_key: str = os.getenv('OPENAI_API_KEY', '')
         self._client: OpenAI | None = None
 
+    def _resolve_api_key(self) -> str:
+        env_key = (os.getenv('OPENAI_API_KEY') or '').strip()
+        if env_key and not env_key.startswith('sk-your-'):
+            return env_key
+
+        try:
+            from app.models import AppConfig
+            db_key = (AppConfig.get('openai_api_key', '') or '').strip()
+            if db_key:
+                return db_key
+        except Exception as e:
+            logger.warning('Failed to load OpenAI key from AppConfig: %s', e)
+
+        return env_key
+
     # ── lazy client ──────────────────────────────────────────────────────
 
     @property
     def client(self) -> OpenAI:
-        if self._client is None:
-            if not self._api_key:
-                raise RuntimeError('OPENAI_API_KEY is not set')
+        resolved_key = self._resolve_api_key()
+        if not resolved_key:
+            raise RuntimeError('OPENAI_API_KEY is not set')
+
+        if self._client is None or resolved_key != self._api_key:
+            self._api_key = resolved_key
             self._client = OpenAI(api_key=self._api_key)
         return self._client
 

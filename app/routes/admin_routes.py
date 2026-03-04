@@ -797,6 +797,11 @@ def instructions():
 def openai_settings():
     if request.method == 'POST':
         modules = ['audience', 'publisher', 'conversation']
+        openai_api_key = request.form.get('openai_api_key', '').strip()
+
+        if openai_api_key:
+            AppConfig.set('openai_api_key', openai_api_key, 'OpenAI API key override')
+
         for module in modules:
             prompt_key = f'openai_prompt_{module}'
             prompt_value = request.form.get(prompt_key, '')
@@ -821,6 +826,7 @@ def openai_settings():
         'openai_prompt_conversation': AppConfig.get('openai_prompt_conversation',
             'You are a helpful assistant for our Telegram channel. Be friendly, informative, and helpful. '
             'Guide users towards our paid content when relevant.'),
+        'openai_api_key_set': bool(AppConfig.get('openai_api_key', '')),
         'openai_model': AppConfig.get('openai_model', 'gpt-4o-mini'),
         'openai_daily_budget': AppConfig.get('openai_daily_budget', '5.0'),
     }
