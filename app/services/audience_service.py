@@ -191,11 +191,16 @@ class AudienceService:
         )
         
         logger.debug(f'[OPENAI QUERY] Categorizing @{username}: {user_msg_categorize[:100]}...')
-        
-        ai_category = self._openai.chat(
-            system_prompt=system_prompt_categorize,
-            user_message=user_msg_categorize,
-            module='audience_categorize',
+
+        # Run blocking OpenAI call in executor to avoid freezing the Telethon event loop.
+        _loop = asyncio.get_running_loop()
+        ai_category = await _loop.run_in_executor(
+            None,
+            lambda: self._openai.chat(
+                system_prompt=system_prompt_categorize,
+                user_message=user_msg_categorize,
+                module='audience_categorize',
+            )
         )
         
         category = 'target_audience'
@@ -241,11 +246,15 @@ class AudienceService:
         )
 
         logger.debug(f'[OPENAI QUERY] Matching @{username} against criteria "{criteria.name}"')
-        
-        ai_match = self._openai.chat(
-            system_prompt=system_prompt_match,
-            user_message=user_msg_match,
-            module='audience_match',
+
+        # Run blocking OpenAI call in executor to avoid freezing the Telethon event loop.
+        ai_match = await _loop.run_in_executor(
+            None,
+            lambda: self._openai.chat(
+                system_prompt=system_prompt_match,
+                user_message=user_msg_match,
+                module='audience_match',
+            )
         )
 
         # Default for target_audience: use categorization confidence

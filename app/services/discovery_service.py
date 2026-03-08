@@ -272,11 +272,16 @@ class DiscoveryService:
         )
 
         logger.debug(f'[EVAL {channel_title}] Checking topic relevance...')
-        
-        ai_result = self._openai.chat(
-            system_prompt=self._get_topic_prompt(),
-            user_message=user_msg,
-            module='discovery',
+
+        # Run blocking OpenAI call in executor so the Telethon event loop is not frozen.
+        _loop = asyncio.get_running_loop()
+        ai_result = await _loop.run_in_executor(
+            None,
+            lambda: self._openai.chat(
+                system_prompt=self._get_topic_prompt(),
+                user_message=user_msg,
+                module='discovery',
+            )
         )
 
         topic_score = 0.0
@@ -482,10 +487,15 @@ Variants: dating singles chat, hookup group, adult relationships, singles commun
 Now generate 5 variants for "{keyword}":
 Reply with ONLY keywords, one per line, no numbering'''
 
-        result = self._openai.chat(
-            system_prompt='You are a Telegram search keyword expert. Generate practical, searchable keywords.',
-            user_message=prompt,
-            module='discovery',
+        # Run blocking OpenAI call in executor so the Telethon event loop is not frozen.
+        _loop = asyncio.get_running_loop()
+        result = await _loop.run_in_executor(
+            None,
+            lambda: self._openai.chat(
+                system_prompt='You are a Telegram search keyword expert. Generate practical, searchable keywords.',
+                user_message=prompt,
+                module='discovery',
+            )
         )
 
         if not result.get('content'):
