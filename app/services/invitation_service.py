@@ -115,7 +115,11 @@ class InvitationService:
             db.session.rollback()
             
             # Check if contact doesn't exist in Telegram
-            if 'Could not find the input entity' in error_str or 'PeerUser' in error_str:
+            if any(phrase in error_str for phrase in [
+                'Could not find the input entity', 'PeerUser',
+                'user was deleted', 'user is deactivated',
+                'The specified user was deleted',
+            ]):
                 logger.warning(f'Contact {contact.id} (ID: {contact.telegram_id}) not found in Telegram - marking as invalid')
                 contact.is_valid = False
                 contact.invitation_sent = True  # Mark as sent so we skip it in future

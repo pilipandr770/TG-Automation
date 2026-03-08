@@ -38,7 +38,7 @@ class DiscoveryService:
     def _get_min_subscribers(self) -> int:
         try:
             from app.models import AppConfig
-            return int(AppConfig.get('discovery_min_subscribers', '50'))
+            return int(AppConfig.get('discovery_min_subscribers', '500'))
         except (TypeError, ValueError):
             return 50
 
@@ -69,7 +69,7 @@ class DiscoveryService:
     def _get_min_topic_score(self) -> float:
         try:
             from app.models import AppConfig
-            return float(AppConfig.get('discovery_min_topic_score', '0.3'))
+            return float(AppConfig.get('discovery_min_topic_score', '0.5'))
         except (TypeError, ValueError):
             return 0.3
 

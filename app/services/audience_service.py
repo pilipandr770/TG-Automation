@@ -366,11 +366,17 @@ class AudienceService:
             
             pre_filter_passed = 0
             users_processed = 0
+            seen_user_ids = set()  # Avoid analyzing the same user multiple times in one channel scan
 
             for msg_data in messages:
                 user_id = msg_data['user_id']
                 username = msg_data.get('username') or msg_data.get('first_name') or f'ID{user_id}'
                 users_processed += 1
+
+                # Skip if already seen in this scan cycle (user had multiple messages)
+                if user_id in seen_user_ids:
+                    continue
+                seen_user_ids.add(user_id)
 
                 # Skip already-known contacts
                 existing = Contact.query.filter_by(telegram_id=user_id).first()
