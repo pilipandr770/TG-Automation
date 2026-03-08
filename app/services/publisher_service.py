@@ -111,10 +111,16 @@ class PublisherService:
             logger.debug(f'[PUBLISHER REWRITE] Input: {len(user_message)} chars')
 
             logger.info(f'[PUBLISHER REWRITE] Calling OpenAI API...')
-            result = self.openai_service.chat(
-                system_prompt=system_prompt,
-                user_message=user_message,
-                module='publisher'
+            # Run blocking OpenAI client call in executor to keep the async
+            # workflow responsive during coordinator cycles.
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: self.openai_service.chat(
+                    system_prompt=system_prompt,
+                    user_message=user_message,
+                    module='publisher'
+                )
             )
 
             if not result:

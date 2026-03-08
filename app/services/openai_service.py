@@ -5,6 +5,7 @@ OpenAI Service — wraps the OpenAI API with budget tracking and usage logging.
 import os
 import base64
 import logging
+import asyncio
 from datetime import datetime, timedelta
 
 from openai import OpenAI
@@ -365,14 +366,20 @@ class OpenAIService:
         try:
             logger.info(f'Transcribing audio: {audio_path}')
             
-            with open(audio_path, 'rb') as audio_file:
-                transcript = self.client.audio.transcriptions.create(
-                    model='whisper-1',
-                    file=audio_file,
-                    language='en'  # Can be dynamic based on user language preference
-                )
-            
-            text = transcript.text
+            # The OpenAI SDK call below is synchronous; run it in a thread so
+            # telethon event processing is not blocked by network latency.
+            loop = asyncio.get_running_loop()
+
+            def _transcribe_blocking() -> str:
+                with open(audio_path, 'rb') as audio_file:
+                    transcript = self.client.audio.transcriptions.create(
+                        model='whisper-1',
+                        file=audio_file,
+                        language='en'  # Can be dynamic based on user language preference
+                    )
+                return transcript.text
+
+            text = await loop.run_in_executor(None, _transcribe_blocking)
             logger.info(f'Transcription complete: {text[:100]}...')
             
             # Log Whisper usage (optional - Whisper doesn't use tokens like GPT)

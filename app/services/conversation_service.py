@@ -105,16 +105,26 @@ class ConversationService:
             logger.info(f'[OPENAI] Sending {len(messages)} messages to OpenAI (including new user message)')
             
             # Use OpenAI chat_with_history to include full dialog + system prompt
-            result = self.openai_service.chat_with_history(
-                system_prompt=system_prompt,
-                messages=messages,
-                module='conversation'
+            # Run the blocking OpenAI call in a thread executor so we don't
+            # block the Telethon asyncio event loop.
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: self.openai_service.chat_with_history(
+                    system_prompt=system_prompt,
+                    messages=messages,
+                    module='conversation'
+                )
             )
 
-            if result and 'content' in result:
+            if result and 'content' in result and result.get('content'):
                 return result['content']
-            else:
-                return "I'm sorry, I couldn't process that right now. Please try again."
+
+            logger.warning(
+                '[OPENAI] Empty/invalid response in private dialog: %s',
+                result.get('error') if isinstance(result, dict) else 'unknown result format'
+            )
+            return "I'm sorry, I couldn't process that right now. Please try again."
 
         except Exception as e:
             logger.error(f'Failed to generate response: {e}')
@@ -148,11 +158,16 @@ class ConversationService:
             messages = history.copy()
             messages.append({'role': 'user', 'content': user_message})
 
-            # Call OpenAI with channel-specific system prompt
-            result = self.openai_service.chat_with_history(
-                system_prompt=system_prompt,
-                messages=messages,
-                module='conversation'
+            # Call OpenAI with channel-specific system prompt. This is a
+            # potentially blocking network call so run it in an executor.
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: self.openai_service.chat_with_history(
+                    system_prompt=system_prompt,
+                    messages=messages,
+                    module='conversation'
+                )
             )
 
             if not result or 'content' not in result:
