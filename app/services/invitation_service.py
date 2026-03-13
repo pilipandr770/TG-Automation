@@ -56,6 +56,11 @@ class InvitationService:
         except RuntimeError:
             return '@your_channel'
 
+    def _update_contact_status(self, contact_id: int, **values) -> None:
+        """Persist contact status changes directly in the database after rollbacks."""
+        db.session.query(Contact).filter_by(id=contact_id).update(values, synchronize_session=False)
+        db.session.commit()
+
     async def send_invitation(self, contact, template):
         """Send invitation message to a contact."""
         try:
@@ -153,30 +158,39 @@ class InvitationService:
             
         except Exception as e:
             error_str = str(e)
+            error_lower = error_str.lower()
             logger.error(f'Failed to send invitation to {contact.telegram_id}: {e}')
             db.session.rollback()
             
             # Check if contact doesn't exist in Telegram
-            if any(phrase in error_str for phrase in [
-                'Could not find the input entity', 'PeerUser',
+            if any(phrase in error_lower for phrase in [
+                'could not find the input entity', 'peeruser',
                 'user was deleted', 'user is deactivated',
-                'The specified user was deleted',
+                'the specified user was deleted',
             ]):
                 logger.warning(f'Contact {contact.id} (ID: {contact.telegram_id}) not found in Telegram - marking as invalid')
-                contact.is_valid = False
-                contact.invitation_sent = True  # Mark as sent so we skip it in future
                 try:
-                    db.session.commit()
-                except:
+                    self._update_contact_status(
+                        contact.id,
+                        is_valid=False,
+                        invitation_sent=True,
+                        status='blocked',
+                        invitation_sent_at=datetime.utcnow(),
+                    )
+                except Exception:
                     db.session.rollback()
             
             # Check if rate limited - skip this contact temporarily
-            elif 'Too many requests' in error_str:
+            elif 'too many requests' in error_lower:
                 logger.warning(f'Contact {contact.id} rate-limited by Telegram - marking as sent to skip')
-                contact.invitation_sent = True  # Mark as sent so we skip it for now
                 try:
-                    db.session.commit()
-                except:
+                    self._update_contact_status(
+                        contact.id,
+                        invitation_sent=True,
+                        status='blocked',
+                        invitation_sent_at=datetime.utcnow(),
+                    )
+                except Exception:
                     db.session.rollback()
             
             # Try to log failed attempt - check if log already exists
