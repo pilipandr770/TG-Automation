@@ -592,6 +592,8 @@ Reply with ONLY keywords, one per line, no numbering'''
             'channels_evaluated': 0,
             'channels_passed': 0,
             'channels_joined': 0,
+            'channels_already_known': 0,
+            'channels_retried': 0,
             'keywords_regenerated': 0,
             'limit_status': {},
         }
@@ -640,18 +642,84 @@ Reply with ONLY keywords, one per line, no numbering'''
             kw.results_count = len(entities)
             # Track whether this keyword found new channels
             channels_found_this_cycle = 0
+            known_channels_this_cycle = 0
+            retried_channels_this_cycle = 0
 
             for entity in entities:
                 stats['channels_found'] += 1
                 telegram_id = entity.id
                 channel_title = getattr(entity, 'title', 'Unknown')
 
-                # Skip already-known channels
+                channel_type = 'channel'
+                if getattr(entity, 'megagroup', False):
+                    channel_type = 'supergroup'
+                elif getattr(entity, 'gigagroup', False):
+                    channel_type = 'supergroup'
+                elif isinstance(entity, types.Chat):
+                    channel_type = 'group'
+
+                # Retry already-known channels if they are not joined yet.
                 existing = DiscoveredChannel.query.filter_by(
                     telegram_id=telegram_id
                 ).first()
                 if existing:
-                    logger.debug(f'[DISCOVERY] Channel already known: {channel_title} ({telegram_id})')
+                    stats['channels_already_known'] += 1
+                    known_channels_this_cycle += 1
+
+                    existing.username = getattr(entity, 'username', None)
+                    existing.title = getattr(entity, 'title', '')
+                    existing.description = getattr(entity, 'about', '')
+                    existing.channel_type = channel_type
+                    existing.search_keyword_id = kw.id
+
+                    if existing.is_blacklisted:
+                        logger.debug(f'[DISCOVERY] Channel blacklisted, skipping: {channel_title} ({telegram_id})')
+                        continue
+
+                    if existing.is_joined:
+                        logger.debug(f'[DISCOVERY] Channel already joined: {channel_title} ({telegram_id})')
+                        continue
+
+                    if existing.status not in ('found', 'join_failed', 'left'):
+                        logger.debug(
+                            f'[DISCOVERY] Known channel skipped without retry: {channel_title} ({telegram_id}) status={existing.status}'
+                        )
+                        continue
+
+                    stats['channels_retried'] += 1
+                    retried_channels_this_cycle += 1
+                    logger.info(
+                        f'[DISCOVERY RETRY] Known channel not joined yet: {channel_title} ({telegram_id}) status={existing.status}'
+                    )
+
+                    stats['channels_evaluated'] += 1
+                    evaluation = await self.evaluate_channel(entity)
+                    logger.info(
+                        f'[EVALUATION RETRY] {channel_title}: passed={evaluation["passed"]}, '
+                        f'subs={evaluation["subscriber_count"]}, score={evaluation["topic_score"]:.2f}'
+                    )
+
+                    existing.subscriber_count = evaluation['subscriber_count']
+                    existing.has_comments = evaluation['has_comments']
+                    existing.topic_match_score = evaluation['topic_score']
+
+                    if evaluation['passed']:
+                        stats['channels_passed'] += 1
+                        logger.info(f'[JOIN RETRY] {channel_title} ({telegram_id}) - passed filters')
+                        await asyncio.sleep(0.5)
+                        joined = await self.join_channel(entity)
+                        if joined:
+                            existing.is_joined = True
+                            existing.join_date = datetime.utcnow()
+                            existing.status = 'joined'
+                            stats['channels_joined'] += 1
+                            logger.info(f'✅ [REJOINED] {channel_title} is_joined=True')
+                        else:
+                            existing.status = 'join_failed'
+                            logger.warning(f'❌ [REJOIN FAILED] {channel_title} - retry join attempt failed')
+                    else:
+                        existing.status = 'found'
+                        logger.info(f'[RETRY SKIP] {channel_title} - still did not pass evaluation filters')
                     continue
 
                 channels_found_this_cycle += 1
@@ -661,15 +729,6 @@ Reply with ONLY keywords, one per line, no numbering'''
                 stats['channels_evaluated'] += 1
                 evaluation = await self.evaluate_channel(entity)
                 logger.info(f'[EVALUATION] {channel_title}: passed={evaluation["passed"]}, subs={evaluation["subscriber_count"]}, score={evaluation["topic_score"]:.2f}')
-
-                # Determine channel type
-                channel_type = 'channel'
-                if getattr(entity, 'megagroup', False):
-                    channel_type = 'supergroup'
-                elif getattr(entity, 'gigagroup', False):
-                    channel_type = 'supergroup'
-                elif isinstance(entity, types.Chat):
-                    channel_type = 'group'
 
                 # Persist
                 discovered = DiscoveredChannel(
@@ -708,10 +767,16 @@ Reply with ONLY keywords, one per line, no numbering'''
             # Update tracking of cycles without new channels
             if channels_found_this_cycle == 0:
                 kw.cycles_without_new += 1
-                logger.info(f'[TRACK] "{kw.keyword}" - no new channels ({kw.cycles_without_new} cycles)')
+                logger.info(
+                    f'[TRACK] "{kw.keyword}" - no new channels ({kw.cycles_without_new} cycles), '
+                    f'known results={known_channels_this_cycle}, retried={retried_channels_this_cycle}'
+                )
             else:
                 kw.cycles_without_new = 0
-                logger.info(f'[TRACK] "{kw.keyword}" - found {channels_found_this_cycle} new channels')
+                logger.info(
+                    f'[TRACK] "{kw.keyword}" - found {channels_found_this_cycle} new channels, '
+                    f'known results={known_channels_this_cycle}, retried={retried_channels_this_cycle}'
+                )
 
         # ══════════════════════════════════════════════════════════════════
         # DIAGNOSTIC: Show what was actually saved to DB
@@ -764,6 +829,8 @@ Reply with ONLY keywords, one per line, no numbering'''
         logger.info(f'├─ Channels evaluated: {stats["channels_evaluated"]}')
         logger.info(f'├─ Channels passed filters: {stats["channels_passed"]}')
         logger.info(f'├─ Channels joined: {stats["channels_joined"]}')
+        logger.info(f'├─ Channels already known: {stats["channels_already_known"]}')
+        logger.info(f'├─ Channels retried: {stats["channels_retried"]}')
         logger.info(f'└─ Keywords regenerated: {stats["keywords_regenerated"]}')
         logger.info('=' * 70)
         

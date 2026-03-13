@@ -95,7 +95,7 @@ def keywords():
         priority = int(request.form.get('priority', 0))
 
         if keyword:
-            kw = SearchKeyword(keyword=keyword, language=language, priority=priority)
+            kw = SearchKeyword(keyword=keyword, language=language, priority=priority, active=True)
             db.session.add(kw)
             db.session.commit()
             flash(f'Keyword "{keyword}" added.', 'success')
