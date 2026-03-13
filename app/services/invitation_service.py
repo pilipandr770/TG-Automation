@@ -68,6 +68,14 @@ class InvitationService:
         logger.info('Cleaned %s stale invalid contacts from invitation queue', updated)
         return updated
 
+    def _has_stale_failure_history(self, contact_id: int) -> bool:
+        """Check whether a contact already has a known-invalid failed invitation log."""
+        logs = InvitationLog.query.filter_by(contact_id=contact_id, status='failed').all()
+        return any(
+            log.error_message and any(pattern in log.error_message.lower() for pattern in self.STALE_ERROR_PATTERNS)
+            for log in logs
+        )
+
     async def select_template(self):
         """Select a random active invitation template."""
         templates = InvitationTemplate.query.filter_by(active=True).all()
@@ -102,6 +110,17 @@ class InvitationService:
     async def send_invitation(self, contact, template):
         """Send invitation message to a contact."""
         try:
+            if self._has_stale_failure_history(contact.id):
+                logger.info('Skipping contact %s due to stale failure history', contact.telegram_id)
+                self._update_contact_status(
+                    contact.id,
+                    is_valid=False,
+                    invitation_sent=True,
+                    status='blocked',
+                    invitation_sent_at=datetime.utcnow(),
+                )
+                return False
+
             client = await self.client_manager.get_client()
             if not client:
                 logger.error('No Telegram client available')
