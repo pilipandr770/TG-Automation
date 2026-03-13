@@ -390,6 +390,21 @@ class AudienceService:
                 # Skip already-known contacts
                 existing = Contact.query.filter_by(telegram_id=user_id).first()
                 if existing:
+                    updated = False
+                    if not existing.access_hash and msg_data.get('access_hash'):
+                        existing.access_hash = msg_data.get('access_hash')
+                        updated = True
+                    if not existing.username and msg_data.get('username'):
+                        existing.username = msg_data.get('username')
+                        updated = True
+                    if not existing.first_name and msg_data.get('first_name'):
+                        existing.first_name = msg_data.get('first_name')
+                        updated = True
+                    if not existing.last_name and msg_data.get('last_name'):
+                        existing.last_name = msg_data.get('last_name')
+                        updated = True
+                    if updated:
+                        logger.info(f'[CONTACT UPDATE] Refreshed peer data for existing contact {existing.id} ({user_id})')
                     continue
 
                 for criteria in criteria_list:

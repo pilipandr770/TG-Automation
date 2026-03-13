@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timedelta
 from sqlalchemy.exc import IntegrityError
 from flask import current_app
+from sqlalchemy import and_, or_
 from app import db
 from app.models import Contact, InvitationTemplate, InvitationLog, AppConfig
 
@@ -19,7 +20,14 @@ class InvitationService:
 
     async def get_pending_contacts(self, limit=10):
         """Get contacts that haven't been invited yet and are valid."""
-        contacts = Contact.query.filter_by(invitation_sent=False, is_valid=True).limit(limit).all()
+        contacts = Contact.query.filter(
+            Contact.invitation_sent.is_(False),
+            Contact.is_valid.is_(True),
+            or_(
+                Contact.access_hash.isnot(None),
+                and_(Contact.username.isnot(None), Contact.username != ''),
+            ),
+        ).order_by(Contact.created_at.desc()).limit(limit).all()
         return contacts
 
     async def select_template(self):
@@ -77,7 +85,15 @@ class InvitationService:
             elif contact.access_hash:
                 peer = InputPeerUser(contact.telegram_id, contact.access_hash)
             else:
-                peer = contact.telegram_id
+                logger.warning(
+                    'Contact %s has no username/access_hash; marking as invalid for invitations',
+                    contact.telegram_id,
+                )
+                contact.is_valid = False
+                contact.invitation_sent = True
+                contact.status = 'blocked'
+                db.session.commit()
+                return False
 
             # Send message
             await client.send_message(peer, message_text)
