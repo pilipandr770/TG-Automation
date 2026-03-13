@@ -72,6 +72,29 @@ class AudienceService:
         except (TypeError, ValueError):
             return 30
 
+    def _get_analysis_timeout_seconds(self) -> float:
+        try:
+            from app.models import AppConfig
+
+            value = AppConfig.get('audience_analysis_timeout_seconds')
+            if value is not None:
+                return max(5.0, min(float(value), 60.0))
+            return 20.0
+        except (TypeError, ValueError):
+            return 20.0
+
+    def _is_low_signal_message(self, message_text: str) -> bool:
+        text = (message_text or '').strip()
+        if not text:
+            return True
+
+        compact = re.sub(r'https?://\S+', ' ', text, flags=re.IGNORECASE)
+        compact = re.sub(r'@\w+', ' ', compact)
+        compact = re.sub(r'[^\w\sа-яА-Я]', ' ', compact)
+        compact = re.sub(r'\s+', ' ', compact).strip()
+
+        return len(compact) < 12
+
     async def _save_contact_to_telegram_profile(self, msg_data: dict) -> bool:
         """Best-effort save of a newly discovered target contact into Telegram contacts."""
         client = await self._client_manager.get_client()
@@ -228,6 +251,14 @@ class AudienceService:
         if message_text is None:
             message_text = ''
         message_text = str(message_text).strip()
+
+        if self._is_low_signal_message(message_text):
+            return {
+                'category': 'target_audience',
+                'match': False,
+                'confidence': 0.0,
+                'reason': 'Low-signal message (mostly links or too short)'
+            }
         
         username = user_entity.get('username') or ''
         username = str(username).lower() if username else ''
@@ -261,21 +292,42 @@ class AudienceService:
         
         user_msg_categorize = (
             f'User: {first_name} (@{username})\n'
-            f'Message: {message_text[:500]}'
+            f'Message: {message_text[:220]}'
         )
         
         logger.debug(f'[OPENAI QUERY] Categorizing @{username}: {user_msg_categorize[:100]}...')
 
         # Run blocking OpenAI call in executor to avoid freezing the Telethon event loop.
         _loop = asyncio.get_running_loop()
-        ai_category = await _loop.run_in_executor(
-            None,
-            lambda: self._openai.chat(
-                system_prompt=system_prompt_categorize,
-                user_message=user_msg_categorize,
-                module='audience_categorize',
+        timeout_seconds = self._get_analysis_timeout_seconds()
+        try:
+            ai_category = await asyncio.wait_for(
+                _loop.run_in_executor(
+                    None,
+                    lambda: self._openai.chat(
+                        system_prompt=system_prompt_categorize,
+                        user_message=user_msg_categorize,
+                        module='audience_categorize',
+                    )
+                ),
+                timeout=timeout_seconds,
             )
-        )
+        except asyncio.TimeoutError:
+            logger.warning('[ANALYZE TIMEOUT] Audience analysis timed out for @%s after %.1fs', username, timeout_seconds)
+            return {
+                'category': 'target_audience',
+                'match': False,
+                'confidence': 0.0,
+                'reason': f'Audience analysis timeout after {timeout_seconds:.1f}s',
+            }
+        except Exception as e:
+            logger.warning('[ANALYZE ERROR] Audience analysis failed for @%s: %s', username, str(e)[:160])
+            return {
+                'category': 'target_audience',
+                'match': False,
+                'confidence': 0.0,
+                'reason': f'Audience analysis error: {str(e)[:120]}',
+            }
         
         category = 'target_audience'
         category_confidence = 0.5
@@ -356,7 +408,21 @@ class AudienceService:
             if len(channels) > 5:
                 logger.info(f'  ... and {len(channels) - 5} more')
 
-        criteria_list = AudienceCriteria.query.filter_by(active=True).all()
+        raw_criteria_list = AudienceCriteria.query.filter_by(active=True).all()
+        criteria_list = []
+        seen_criteria = set()
+        for criteria in raw_criteria_list:
+            dedupe_key = (
+                (criteria.name or '').strip().lower(),
+                (criteria.keywords or '').strip().lower(),
+                float(criteria.min_confidence or 0),
+                (criteria.openai_prompt or '').strip().lower(),
+            )
+            if dedupe_key in seen_criteria:
+                logger.info('[CRITERIA DEDUPE] Skipping duplicate active criteria "%s"', criteria.name)
+                continue
+            seen_criteria.add(dedupe_key)
+            criteria_list.append(criteria)
         logger.info(f'✅ [CRITERIA RESULT] Found {len(criteria_list)} active audience criteria')
         if criteria_list:
             for crit in criteria_list:
