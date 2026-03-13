@@ -8,6 +8,7 @@ OpenAI to evaluate whether a user matches the target audience criteria.
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime
 
 from telethon import functions, types
@@ -48,6 +49,28 @@ class AudienceService:
             return 600
         except (TypeError, ValueError):
             return 600
+
+    def _get_message_scan_limit(self) -> int:
+        try:
+            from app.models import AppConfig
+
+            value = AppConfig.get('audience_message_limit')
+            if value is not None:
+                return max(50, min(int(value), 500))
+            return 150
+        except (TypeError, ValueError):
+            return 150
+
+    def _get_analysis_cap_per_channel(self) -> int:
+        try:
+            from app.models import AppConfig
+
+            value = AppConfig.get('audience_analysis_cap_per_channel')
+            if value is not None:
+                return max(10, min(int(value), 100))
+            return 30
+        except (TypeError, ValueError):
+            return 30
 
     async def _save_contact_to_telegram_profile(self, msg_data: dict) -> bool:
         """Best-effort save of a newly discovered target contact into Telegram contacts."""
@@ -175,8 +198,16 @@ class AudienceService:
             return True
 
         keywords = [k.strip().lower() for k in criteria.keywords.split(',') if k.strip()]
-        text_lower = message_text.lower()
-        return any(kw in text_lower for kw in keywords)
+        text_lower = (message_text or '').lower()
+
+        for keyword in keywords:
+            # Use word-aware matching so short keywords like "ton" do not match
+            # unrelated words such as "tonight".
+            pattern = r'(?<!\w)' + re.escape(keyword) + r'(?!\w)'
+            if re.search(pattern, text_lower, flags=re.IGNORECASE):
+                return True
+
+        return False
 
     async def analyze_user(
         self,
@@ -391,9 +422,17 @@ class AudienceService:
         
         logger.info(f'\n✅ [READY] Starting scan of {len(channels)} channels with {len(criteria_list)} criteria...')
 
+        message_limit = self._get_message_scan_limit()
+        analysis_cap_per_channel = self._get_analysis_cap_per_channel()
+        logger.info(f'[AUDIENCE CONFIG] message_limit={message_limit}, analysis_cap_per_channel={analysis_cap_per_channel}')
+
         for channel in channels:
             logger.info(f'\n[SCAN CHANNEL] Scanning: {channel.title} ({channel.telegram_id})')
-            messages = await self.scan_channel_messages(channel.telegram_id, username=channel.username)
+            messages = await self.scan_channel_messages(
+                channel.telegram_id,
+                limit=message_limit,
+                username=channel.username,
+            )
             stats['channels_scanned'] += 1
             stats['messages_read'] += len(messages)
             
@@ -409,6 +448,7 @@ class AudienceService:
             
             pre_filter_passed = 0
             users_processed = 0
+            analyzed_in_channel = 0
             seen_user_ids = set()  # Avoid analyzing the same user multiple times in one channel scan
 
             for msg_data in messages:
@@ -443,6 +483,14 @@ class AudienceService:
                     continue
 
                 for criteria in criteria_list:
+                    if analyzed_in_channel >= analysis_cap_per_channel:
+                        logger.info(
+                            '[CHANNEL CAP] Reached analysis cap for %s: %s users analyzed',
+                            channel.title,
+                            analysis_cap_per_channel,
+                        )
+                        break
+
                     # Pre-filter
                     pre_filter_result = self._pre_filter(msg_data['message_text'], criteria)
                     
@@ -459,6 +507,7 @@ class AudienceService:
                         msg_data, msg_data['message_text'], criteria
                     )
                     stats['users_analyzed'] += 1
+                    analyzed_in_channel += 1
                     logger.info(f'[ANALYSIS RESULT] Category: {evaluation.get("category")}, Confidence: {evaluation.get("confidence", 0):.2f}')
 
                     # Track all categories
@@ -507,6 +556,9 @@ class AudienceService:
                     db.session.add(contact)
                     await self._save_contact_to_telegram_profile(msg_data)
                     # Only match once per user — break criteria loop
+                    break
+
+                if analyzed_in_channel >= analysis_cap_per_channel:
                     break
 
             db.session.commit()
