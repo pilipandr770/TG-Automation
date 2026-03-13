@@ -132,43 +132,50 @@ class AudienceService:
     # ── core methods ─────────────────────────────────────────────────────
 
     async def scan_channel_messages(
-        self, channel_id: int, limit: int = 500, username: str = None
-    ) -> list[dict]:
-        """Read recent messages from a joined channel (last 500 messages ~ 5-10 days).
+        self, channel_id: int, limit: int = 500, username: str = None, since_message_id: int | None = None
+    ) -> tuple[list[dict], int | None]:
+        """Read only newer messages from a joined channel.
 
         Returns a list of dicts: {user_id, username, first_name, last_name,
-        message_text, message_id}.
+        message_text, message_id}, and the max raw message id seen in Telegram.
         """
         client = await self._client_manager.get_client()
         if client is None:
             logger.warning('[SCAN] No client available for channel %s', channel_id)
-            return []
+            return [], since_message_id
 
         if not await self._rate_limiter.acquire('read_messages'):
             logger.warning('[SCAN] Rate limited — skipping message scan for channel %s', channel_id)
-            return []
+            return [], since_message_id
 
         results = []
+        max_seen_message_id = since_message_id
         
         # Try to fetch messages using username if available (more reliable)
         # Fall back to ID if no username
         channel_ref = f'@{username}' if username else channel_id
         
-        logger.info(f'[SCAN] Attempting to fetch messages from {channel_ref} (limit={limit})')
+        logger.info(f'[SCAN] Attempting to fetch messages from {channel_ref} (limit={limit}, since_message_id={since_message_id})')
         
         try:
-            messages = await client.get_messages(channel_ref, limit=limit)
+            messages = await client.get_messages(
+                channel_ref,
+                limit=limit,
+                min_id=max(0, int(since_message_id or 0)),
+            )
             logger.info(f'[SCAN] Successfully fetched {len(messages)} messages from {channel_ref}')
+            if messages:
+                max_seen_message_id = max(getattr(msg, 'id', 0) or 0 for msg in messages)
         except FloodWaitError as e:
             logger.warning(f'[SCAN] FloodWait on {channel_ref}: {e}')
             await self._rate_limiter.handle_flood_wait(e)
-            return []
+            return [], since_message_id
         except ChannelPrivateError:
             logger.warning(f'[SCAN] Channel {channel_id} is private or we were kicked')
-            return []
+            return [], since_message_id
         except Exception as e:
             logger.warning(f'[SCAN] Failed to fetch messages from channel {channel_id}: {str(e)[:100]}')
-            return []
+            return [], since_message_id
 
         # Process messages one by one, skip any with errors
         skipped_no_text = 0
@@ -176,7 +183,7 @@ class AudienceService:
         skipped_not_user = 0
         skipped_bots = 0
         
-        for msg in messages:
+        for msg in reversed(messages):
             try:
                 if not msg.text:
                     skipped_no_text += 1
@@ -208,7 +215,7 @@ class AudienceService:
                 continue
 
         logger.info(f'[SCAN] Processed messages from {channel_ref}: {len(results)} users extracted (skipped: {skipped_no_text} no text, {skipped_no_sender} no sender, {skipped_not_user} not user, {skipped_bots} bots)')
-        return results
+        return results, max_seen_message_id
 
     def _pre_filter(self, message_text: str, criteria) -> bool:
         """Quick keyword check before calling OpenAI.
@@ -452,19 +459,24 @@ class AudienceService:
 
         for channel in channels:
             logger.info(f'\n[SCAN CHANNEL] Scanning: {channel.title} ({channel.telegram_id})')
-            messages = await self.scan_channel_messages(
+            messages, max_message_id = await self.scan_channel_messages(
                 channel.telegram_id,
                 limit=message_limit,
                 username=channel.username,
+                since_message_id=channel.last_scanned_message_id,
             )
             stats['channels_scanned'] += 1
             stats['messages_read'] += len(messages)
             
             logger.info(f'[SCAN CHANNEL] Read {len(messages)} messages from {channel.title or channel.telegram_id}')
             
+            if max_message_id and (channel.last_scanned_message_id is None or max_message_id > channel.last_scanned_message_id):
+                channel.last_scanned_message_id = max_message_id
+
             if not messages:
                 logger.info(f'[SCAN CHANNEL] No messages found in {channel.title}')
                 channel.last_scanned_at = datetime.utcnow()
+                db.session.commit()
                 continue
 
             # Update last scanned

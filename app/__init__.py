@@ -44,9 +44,16 @@ def _seed_fresh_database_defaults(app):
         'discovery_min_subscribers': '150',
         'audience_scan_interval_minutes': '30',
         'audience_scan_interval': '1800',
+        'audience_message_limit': '150',
+        'audience_analysis_cap_per_channel': '30',
         'invitation_batch_size': '15',
         'daily_invitation_limit': '80',
         'openai_enabled': 'true',
+        'discovery_max_active_keywords': '40',
+        'discovery_keyword_cooldown_minutes': '360',
+        'discovery_channel_retry_base_minutes': '60',
+        'discovery_channel_retry_max_minutes': '1440',
+        'discovery_low_quality_keyword_threshold': '0.35',
     }
 
     keywords = [
@@ -194,6 +201,15 @@ def _run_column_migrations(connection):
     migrations = [
         # contacts.access_hash — needed to send DMs after entity cache is cleared
         "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS access_hash BIGINT",
+        "ALTER TABLE search_keywords ADD COLUMN IF NOT EXISTS next_eligible_at TIMESTAMP",
+        "ALTER TABLE search_keywords ADD COLUMN IF NOT EXISTS quality_score DOUBLE PRECISION DEFAULT 1.0",
+        "ALTER TABLE discovered_channels ADD COLUMN IF NOT EXISTS last_scanned_message_id BIGINT",
+        "ALTER TABLE discovered_channels ADD COLUMN IF NOT EXISTS last_evaluated_at TIMESTAMP",
+        "ALTER TABLE discovered_channels ADD COLUMN IF NOT EXISTS last_join_attempt_at TIMESTAMP",
+        "ALTER TABLE discovered_channels ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMP",
+        "ALTER TABLE discovered_channels ADD COLUMN IF NOT EXISTS evaluation_fail_count INTEGER DEFAULT 0",
+        "ALTER TABLE discovered_channels ADD COLUMN IF NOT EXISTS join_fail_count INTEGER DEFAULT 0",
+        "ALTER TABLE discovered_channels ADD COLUMN IF NOT EXISTS retry_reason VARCHAR(255)",
     ]
     for sql in migrations:
         try:

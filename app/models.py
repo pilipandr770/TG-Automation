@@ -125,6 +125,8 @@ class SearchKeyword(db.Model):
     cycles_without_new = db.Column(db.Integer, default=0)  # Tracks cycles with no new channels
     generation_round = db.Column(db.Integer, default=0)    # 0=original, 1,2,3=regenerated variants
     source_keyword = db.Column(db.String(255))              # Original keyword if this is regenerated
+    next_eligible_at = db.Column(db.DateTime)
+    quality_score = db.Column(db.Float, default=1.0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
@@ -147,6 +149,13 @@ class DiscoveredChannel(db.Model):
     search_keyword = db.relationship('SearchKeyword', backref='channels')
     status = db.Column(db.String(20), default='found')  # found, joined, left, banned
     last_scanned_at = db.Column(db.DateTime)
+    last_scanned_message_id = db.Column(db.BigInteger)
+    last_evaluated_at = db.Column(db.DateTime)
+    last_join_attempt_at = db.Column(db.DateTime)
+    next_retry_at = db.Column(db.DateTime)
+    evaluation_fail_count = db.Column(db.Integer, default=0)
+    join_fail_count = db.Column(db.Integer, default=0)
+    retry_reason = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

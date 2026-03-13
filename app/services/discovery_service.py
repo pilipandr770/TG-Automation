@@ -123,6 +123,135 @@ class DiscoveryService:
         except (TypeError, ValueError):
             return 10
 
+    def _get_keyword_cooldown_minutes(self) -> int:
+        try:
+            from app.models import AppConfig
+            value = AppConfig.get('discovery_keyword_cooldown_minutes')
+            if value is not None:
+                return max(30, min(int(value), 7 * 24 * 60))
+            return 360
+        except (TypeError, ValueError):
+            return 360
+
+    def _get_low_quality_keyword_threshold(self) -> float:
+        try:
+            from app.models import AppConfig
+            value = AppConfig.get('discovery_low_quality_keyword_threshold')
+            if value is not None:
+                return max(0.1, min(float(value), 2.0))
+            return 0.35
+        except (TypeError, ValueError):
+            return 0.35
+
+    def _get_channel_retry_base_minutes(self) -> int:
+        try:
+            from app.models import AppConfig
+            value = AppConfig.get('discovery_channel_retry_base_minutes')
+            if value is not None:
+                return max(15, min(int(value), 12 * 60))
+            return 60
+        except (TypeError, ValueError):
+            return 60
+
+    def _get_channel_retry_max_minutes(self) -> int:
+        try:
+            from app.models import AppConfig
+            value = AppConfig.get('discovery_channel_retry_max_minutes')
+            if value is not None:
+                return max(self._get_channel_retry_base_minutes(), min(int(value), 14 * 24 * 60))
+            return 1440
+        except (TypeError, ValueError):
+            return 1440
+
+    def _is_keyword_eligible(self, keyword, now: datetime | None = None) -> bool:
+        now = now or datetime.utcnow()
+        next_eligible_at = getattr(keyword, 'next_eligible_at', None)
+        return not next_eligible_at or next_eligible_at <= now
+
+    def _clear_channel_retry(self, channel) -> None:
+        channel.last_evaluated_at = datetime.utcnow()
+        channel.next_retry_at = None
+        channel.retry_reason = None
+        channel.evaluation_fail_count = 0
+        channel.join_fail_count = 0
+
+    def _schedule_channel_retry(self, channel, *, reason: str, join_attempt: bool = False) -> None:
+        now = datetime.utcnow()
+        fail_attr = 'join_fail_count' if join_attempt else 'evaluation_fail_count'
+        current_failures = (getattr(channel, fail_attr, 0) or 0) + 1
+        setattr(channel, fail_attr, current_failures)
+
+        if join_attempt:
+            channel.last_join_attempt_at = now
+        else:
+            channel.last_evaluated_at = now
+
+        delay_minutes = min(
+            self._get_channel_retry_max_minutes(),
+            self._get_channel_retry_base_minutes() * (2 ** min(current_failures - 1, 5)),
+        )
+        next_retry_at = now + timedelta(minutes=delay_minutes)
+        if join_attempt and self._join_rate_limited_until:
+            next_retry_at = max(next_retry_at, self._join_rate_limited_until)
+
+        channel.next_retry_at = next_retry_at
+        channel.retry_reason = (reason or 'retry scheduled')[:255]
+        logger.info(
+            '[CHANNEL RETRY] %s (%s) scheduled for retry at %s after %s failure #%s: %s',
+            getattr(channel, 'title', 'Unknown'),
+            getattr(channel, 'telegram_id', '?'),
+            next_retry_at.isoformat(),
+            'join' if join_attempt else 'evaluation',
+            current_failures,
+            channel.retry_reason,
+        )
+
+    def _update_keyword_lifecycle(
+        self,
+        keyword,
+        *,
+        new_channels_found: int,
+        joined_channels: int,
+    ) -> None:
+        base_score = float(getattr(keyword, 'quality_score', None) or 1.0)
+        threshold = self._get_keyword_regeneration_threshold()
+
+        if new_channels_found > 0:
+            keyword.cycles_without_new = 0
+            keyword.exhausted = False
+            keyword.next_eligible_at = None
+            keyword.quality_score = min(5.0, base_score + 0.35 + (0.1 * min(joined_channels, 5)))
+            return
+
+        keyword.cycles_without_new += 1
+        keyword.quality_score = max(0.1, base_score - 0.15)
+
+        if keyword.cycles_without_new >= threshold:
+            cooldown_multiplier = min(keyword.cycles_without_new - threshold + 1, 8)
+            cooldown_minutes = self._get_keyword_cooldown_minutes() * cooldown_multiplier
+            keyword.next_eligible_at = datetime.utcnow() + timedelta(minutes=cooldown_minutes)
+            logger.info(
+                '[KEYWORD COOLDOWN] "%s" cooling down until %s after %s empty cycles (quality=%.2f)',
+                keyword.keyword,
+                keyword.next_eligible_at.isoformat(),
+                keyword.cycles_without_new,
+                keyword.quality_score,
+            )
+
+        if (
+            keyword.generation_round > 0
+            and keyword.cycles_without_new >= threshold * 2
+            and keyword.quality_score <= self._get_low_quality_keyword_threshold()
+        ):
+            keyword.active = False
+            keyword.exhausted = True
+            logger.info(
+                '[KEYWORD PRUNE] Deactivated low-quality regenerated keyword "%s" (quality=%.2f, empty_cycles=%s)',
+                keyword.keyword,
+                keyword.quality_score,
+                keyword.cycles_without_new,
+            )
+
     def _is_join_rate_limited(self) -> bool:
         return bool(self._join_rate_limited_until and datetime.utcnow() < self._join_rate_limited_until)
 
@@ -481,6 +610,7 @@ class DiscoveryService:
 
         stats = {
             'keywords_checked': 0,
+            'keywords_cooling_down': 0,
             'keywords_exhausted': 0,
             'variants_generated': 0,
             'cycles_threshold': self._get_keyword_regeneration_threshold(),
@@ -489,13 +619,16 @@ class DiscoveryService:
         # Get business goal / target topic for context
         business_goal = AppConfig.get('business_goal', 'adult content and relationships')
         
+        now = datetime.utcnow()
         keywords = SearchKeyword.query.filter_by(active=True).all()
-        stats['keywords_checked'] = len(keywords)
+        eligible_keywords = [kw for kw in keywords if self._is_keyword_eligible(kw, now)]
+        stats['keywords_checked'] = len(eligible_keywords)
+        stats['keywords_cooling_down'] = len(keywords) - len(eligible_keywords)
 
-        if len(keywords) >= self._get_max_active_keywords():
+        if len(eligible_keywords) >= self._get_max_active_keywords():
             logger.info(
                 '[REGENERATE SKIP] Active keyword count already high (%s >= %s), skipping regeneration this cycle',
-                len(keywords),
+                len(eligible_keywords),
                 self._get_max_active_keywords(),
             )
             return stats
@@ -506,9 +639,9 @@ class DiscoveryService:
 
         variants_budget = self._get_max_regenerated_variants_per_cycle()
         
-        logger.info(f'[REGENERATE CHECK] Checking {len(keywords)} active keywords for regeneration')
+        logger.info(f'[REGENERATE CHECK] Checking {len(eligible_keywords)} eligible keywords for regeneration')
 
-        for kw in keywords:
+        for kw in eligible_keywords:
             if stats['variants_generated'] >= variants_budget:
                 logger.info('[REGENERATE LIMIT] Variant budget reached for this cycle: %s', variants_budget)
                 break
@@ -525,6 +658,10 @@ class DiscoveryService:
                 logger.info(f'[REGENERATE START] └─ Generation round: {kw.generation_round}')
                 
                 kw.exhausted = True
+                kw.next_eligible_at = now + timedelta(
+                    minutes=self._get_keyword_cooldown_minutes() * max(1, kw.generation_round + 1)
+                )
+                kw.quality_score = max(0.1, float(getattr(kw, 'quality_score', None) or 1.0) - 0.2)
                 stats['keywords_exhausted'] += 1
 
                 # Generate 3-5 new keyword variants
@@ -553,6 +690,7 @@ class DiscoveryService:
                         priority=max(kw.priority, 50),  # Higher priority for freshly generated
                         generation_round=kw.generation_round + 1,
                         source_keyword=kw.keyword,
+                        quality_score=max(1.0, float(getattr(kw, 'quality_score', None) or 1.0)),
                     )
                     db.session.add(new_kw)
                     stats['variants_generated'] += 1
@@ -654,12 +792,14 @@ Reply with ONLY keywords, one per line, no numbering'''
         
         stats = {
             'keywords_processed': 0,
+            'keywords_on_cooldown': 0,
             'channels_found': 0,
             'channels_evaluated': 0,
             'channels_passed': 0,
             'channels_joined': 0,
             'channels_already_known': 0,
             'channels_retried': 0,
+            'channels_retry_deferred': 0,
             'keywords_regenerated': 0,
             'limit_status': {},
         }
@@ -676,22 +816,42 @@ Reply with ONLY keywords, one per line, no numbering'''
             )
 
 
-        keywords = SearchKeyword.query.filter_by(active=True).order_by(
-            SearchKeyword.priority.desc()
-        ).all()
+        now = datetime.utcnow()
+        all_keywords = SearchKeyword.query.filter_by(active=True).all()
+        keywords = [kw for kw in all_keywords if self._is_keyword_eligible(kw, now)]
+        stats['keywords_on_cooldown'] = len(all_keywords) - len(keywords)
+        keywords.sort(
+            key=lambda kw: (
+                kw.priority or 0,
+                float(getattr(kw, 'quality_score', None) or 1.0),
+                -(kw.generation_round or 0),
+                kw.last_used or datetime.min,
+            ),
+            reverse=True,
+        )
         
         # CRITICAL: Check if keywords exist - don't proceed if empty
         if not keywords or len(keywords) == 0:
             logger.warning('=' * 70)
-            logger.warning('[DISCOVERY] ⚠️  NO ACTIVE KEYWORDS FOUND!')
-            logger.warning('[DISCOVERY] Please generate keywords from admin panel:')
-            logger.warning('[DISCOVERY]   1. Go to Admin → Business Goal')
-            logger.warning('[DISCOVERY]   2. Describe your business goal')
-            logger.warning('[DISCOVERY]   3. Click "Generate Keywords"')
+            if all_keywords:
+                next_ready_keyword = min(
+                    (kw.next_eligible_at for kw in all_keywords if kw.next_eligible_at),
+                    default=None,
+                )
+                logger.warning('[DISCOVERY] ⚠️  NO ELIGIBLE KEYWORDS RIGHT NOW!')
+                logger.warning('[DISCOVERY] %s keywords are currently in cooldown.', len(all_keywords))
+                if next_ready_keyword:
+                    logger.warning('[DISCOVERY] Next keyword becomes eligible at %s', next_ready_keyword.isoformat())
+            else:
+                logger.warning('[DISCOVERY] ⚠️  NO ACTIVE KEYWORDS FOUND!')
+                logger.warning('[DISCOVERY] Please generate keywords from admin panel:')
+                logger.warning('[DISCOVERY]   1. Go to Admin → Business Goal')
+                logger.warning('[DISCOVERY]   2. Describe your business goal')
+                logger.warning('[DISCOVERY]   3. Click "Generate Keywords"')
             logger.warning('[DISCOVERY] Waiting 30 seconds before retry...')
             logger.warning('=' * 70)
             stats['keywords_processed'] = 0
-            stats['error'] = 'No active keywords configured'
+            stats['error'] = 'No eligible keywords configured'
             await asyncio.sleep(30)
             return stats
         
@@ -710,6 +870,7 @@ Reply with ONLY keywords, one per line, no numbering'''
             channels_found_this_cycle = 0
             known_channels_this_cycle = 0
             retried_channels_this_cycle = 0
+            joined_channels_this_cycle = 0
 
             for entity in entities:
                 stats['channels_found'] += 1
@@ -746,6 +907,17 @@ Reply with ONLY keywords, one per line, no numbering'''
                         logger.debug(f'[DISCOVERY] Channel already joined: {channel_title} ({telegram_id})')
                         continue
 
+                    if existing.next_retry_at and existing.next_retry_at > datetime.utcnow():
+                        stats['channels_retry_deferred'] += 1
+                        logger.debug(
+                            '[DISCOVERY] Channel retry deferred: %s (%s) until %s (%s)',
+                            channel_title,
+                            telegram_id,
+                            existing.next_retry_at.isoformat(),
+                            existing.retry_reason,
+                        )
+                        continue
+
                     if existing.status not in ('found', 'join_failed', 'left'):
                         logger.debug(
                             f'[DISCOVERY] Known channel skipped without retry: {channel_title} ({telegram_id}) status={existing.status}'
@@ -760,6 +932,7 @@ Reply with ONLY keywords, one per line, no numbering'''
 
                     stats['channels_evaluated'] += 1
                     evaluation = await self.evaluate_channel(entity)
+                    existing.last_evaluated_at = datetime.utcnow()
                     logger.info(
                         f'[EVALUATION RETRY] {channel_title}: passed={evaluation["passed"]}, '
                         f'subs={evaluation["subscriber_count"]}, score={evaluation["topic_score"]:.2f}'
@@ -773,20 +946,29 @@ Reply with ONLY keywords, one per line, no numbering'''
                         stats['channels_passed'] += 1
                         logger.info(f'[JOIN RETRY] {channel_title} ({telegram_id}) - passed filters')
                         await asyncio.sleep(0.5)
+                        existing.last_join_attempt_at = datetime.utcnow()
                         joined = await self.join_channel(entity)
                         if joined:
                             existing.is_joined = True
                             existing.join_date = datetime.utcnow()
                             existing.status = 'joined'
+                            self._clear_channel_retry(existing)
                             stats['channels_joined'] += 1
+                            joined_channels_this_cycle += 1
                             logger.info(f'✅ [REJOINED] {channel_title} is_joined=True')
                         else:
                             existing.status = 'join_failed'
+                            self._schedule_channel_retry(
+                                existing,
+                                reason='join rate limited' if self._is_join_rate_limited() else 'join attempt failed',
+                                join_attempt=True,
+                            )
                             logger.warning(f'❌ [REJOIN FAILED] {channel_title} - retry join attempt failed')
                             if self._is_join_rate_limited():
                                 logger.info('[DISCOVERY] Join cooldown activated mid-cycle, stopping further join retries for now')
                     else:
                         existing.status = 'found'
+                        self._schedule_channel_retry(existing, reason=evaluation['reason'], join_attempt=False)
                         logger.info(f'[RETRY SKIP] {channel_title} - still did not pass evaluation filters')
                     continue
 
@@ -810,6 +992,7 @@ Reply with ONLY keywords, one per line, no numbering'''
                     topic_match_score=evaluation['topic_score'],
                     search_keyword_id=kw.id,
                     status='found',
+                    last_evaluated_at=datetime.utcnow(),
                 )
 
                 if evaluation['passed']:
@@ -817,35 +1000,52 @@ Reply with ONLY keywords, one per line, no numbering'''
                     logger.info(f'[JOIN ATTEMPT] {channel_title} ({telegram_id}) - passed filters')
                     # Small delay to ensure API is ready
                     await asyncio.sleep(0.5)
+                    discovered.last_join_attempt_at = datetime.utcnow()
                     joined = await self.join_channel(entity)
                     if joined:
                         discovered.is_joined = True
                         discovered.join_date = datetime.utcnow()
                         discovered.status = 'joined'
+                        self._clear_channel_retry(discovered)
                         stats['channels_joined'] += 1
+                        joined_channels_this_cycle += 1
                         logger.info(f'✅ [SAVED JOINED] {channel_title} is_joined=True')
                     else:
                         logger.warning(f'❌ [JOIN FAILED] {channel_title} - join attempt failed, saving as not_joined')
                         discovered.status = 'join_failed'
+                        self._schedule_channel_retry(
+                            discovered,
+                            reason='join rate limited' if self._is_join_rate_limited() else 'join attempt failed',
+                            join_attempt=True,
+                        )
                         if self._is_join_rate_limited():
                             logger.info('[DISCOVERY] Join cooldown activated mid-cycle, stopping further join attempts for now')
                 else:
+                    self._schedule_channel_retry(discovered, reason=evaluation['reason'], join_attempt=False)
                     logger.info(f'[SKIP] {channel_title} - did not pass evaluation filters')
 
                 db.session.add(discovered)
 
             # Update tracking of cycles without new channels
             if channels_found_this_cycle == 0:
-                kw.cycles_without_new += 1
+                self._update_keyword_lifecycle(
+                    kw,
+                    new_channels_found=channels_found_this_cycle,
+                    joined_channels=joined_channels_this_cycle,
+                )
                 logger.info(
                     f'[TRACK] "{kw.keyword}" - no new channels ({kw.cycles_without_new} cycles), '
-                    f'known results={known_channels_this_cycle}, retried={retried_channels_this_cycle}'
+                    f'known results={known_channels_this_cycle}, retried={retried_channels_this_cycle}, quality={float(getattr(kw, "quality_score", None) or 1.0):.2f}'
                 )
             else:
-                kw.cycles_without_new = 0
+                self._update_keyword_lifecycle(
+                    kw,
+                    new_channels_found=channels_found_this_cycle,
+                    joined_channels=joined_channels_this_cycle,
+                )
                 logger.info(
                     f'[TRACK] "{kw.keyword}" - found {channels_found_this_cycle} new channels, '
-                    f'known results={known_channels_this_cycle}, retried={retried_channels_this_cycle}'
+                    f'known results={known_channels_this_cycle}, retried={retried_channels_this_cycle}, quality={float(getattr(kw, "quality_score", None) or 1.0):.2f}'
                 )
 
         # ══════════════════════════════════════════════════════════════════
@@ -895,12 +1095,14 @@ Reply with ONLY keywords, one per line, no numbering'''
         logger.info('=' * 70)
         logger.info('[CYCLE SUMMARY] Discovery cycle complete:')
         logger.info(f'├─ Keywords processed: {stats["keywords_processed"]}')
+        logger.info(f'├─ Keywords on cooldown: {stats["keywords_on_cooldown"]}')
         logger.info(f'├─ Channels found: {stats["channels_found"]}')
         logger.info(f'├─ Channels evaluated: {stats["channels_evaluated"]}')
         logger.info(f'├─ Channels passed filters: {stats["channels_passed"]}')
         logger.info(f'├─ Channels joined: {stats["channels_joined"]}')
         logger.info(f'├─ Channels already known: {stats["channels_already_known"]}')
         logger.info(f'├─ Channels retried: {stats["channels_retried"]}')
+        logger.info(f'├─ Channels retry deferred: {stats["channels_retry_deferred"]}')
         logger.info(f'└─ Keywords regenerated: {stats["keywords_regenerated"]}')
         logger.info('=' * 70)
         
