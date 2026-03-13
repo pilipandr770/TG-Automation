@@ -1,4 +1,5 @@
 from datetime import datetime
+from flask import has_app_context
 from flask_login import UserMixin
 from app import db
 
@@ -26,11 +27,7 @@ class AppConfig(db.Model):
 
     @classmethod
     def get(cls, key, default=None):
-        try:
-            # Check if we're in an app context
-            from flask import current_app
-            current_app
-        except RuntimeError:
+        if not has_app_context():
             # No app context - need to create one
             from app import create_app
             app = create_app()
@@ -45,7 +42,8 @@ class AppConfig(db.Model):
             import logging
             logger = logging.getLogger(__name__)
             logger.warning(f'Error reading config {key}: {e}, attempting rollback')
-            db.session.rollback()
+            if has_app_context():
+                db.session.rollback()
             try:
                 config = cls.query.filter_by(key=key).first()
                 return config.value if config else default
@@ -54,11 +52,7 @@ class AppConfig(db.Model):
 
     @classmethod
     def set(cls, key, value, description=None):
-        try:
-            # Check if we're in an app context
-            from flask import current_app
-            current_app
-        except RuntimeError:
+        if not has_app_context():
             # No app context - need to create one
             from app import create_app
             app = create_app()
@@ -81,7 +75,8 @@ class AppConfig(db.Model):
             import logging
             logger = logging.getLogger(__name__)
             logger.warning(f'Error setting config {key}: {e}, attempting rollback')
-            db.session.rollback()
+            if has_app_context():
+                db.session.rollback()
             try:
                 config = cls.query.filter_by(key=key).first()
                 if config:

@@ -7,6 +7,7 @@ import base64
 import logging
 import asyncio
 from datetime import datetime, timedelta
+from flask import has_app_context
 
 from openai import OpenAI
 
@@ -59,6 +60,21 @@ class OpenAIService:
 
     # ── config helpers (need Flask app context) ──────────────────────────
 
+    def _run_with_app_context(self, func, fallback=None):
+        """Run DB-backed helpers safely from executor threads without a Flask app context."""
+        if has_app_context():
+            return func()
+
+        try:
+            from app import create_app
+
+            app = create_app(os.getenv('FLASK_ENV', 'development'))
+            with app.app_context():
+                return func()
+        except Exception as e:
+            logger.warning('Failed to create app context for OpenAI helper: %s', e)
+            return fallback
+
     def _get_model(self) -> str:
         from app.models import AppConfig
         return AppConfig.get('openai_model', DEFAULT_MODEL)
@@ -74,14 +90,14 @@ class OpenAIService:
 
     def _check_budget(self) -> bool:
         """Return True if spending today is still under the daily budget."""
-        try:
+        def _check():
             from app.models import OpenAIUsageLog
+            from app import db
 
             budget = self._get_daily_budget()
             today_start = datetime.utcnow().replace(
                 hour=0, minute=0, second=0, microsecond=0
             )
-            from app import db
 
             total_today = (
                 db.session.query(db.func.coalesce(db.func.sum(OpenAIUsageLog.cost_estimate), 0))
@@ -96,6 +112,10 @@ class OpenAIService:
                 )
                 return False
             return True
+
+        try:
+            result = self._run_with_app_context(_check, fallback=True)
+            return True if result is None else result
         except Exception as e:
             logger.error('Budget check failed: %s', e)
             return True  # fail-open so the bot is not stuck
@@ -118,7 +138,7 @@ class OpenAIService:
         prompt_tokens: int,
         completion_tokens: int,
     ) -> None:
-        try:
+        def _write_log() -> None:
             from app import db
             from app.models import OpenAIUsageLog
 
@@ -136,6 +156,9 @@ class OpenAIService:
             )
             db.session.add(log)
             db.session.commit()
+
+        try:
+            self._run_with_app_context(_write_log)
         except Exception as e:
             logger.error('Failed to log OpenAI usage: %s', e)
 
