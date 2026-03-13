@@ -17,6 +17,21 @@ csrf = CSRFProtect()
 logger = logging.getLogger(__name__)
 
 
+def _run_column_migrations(connection):
+    """Apply incremental ADD COLUMN migrations safely (idempotent)."""
+    migrations = [
+        # contacts.access_hash — needed to send DMs after entity cache is cleared
+        "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS access_hash BIGINT",
+    ]
+    for sql in migrations:
+        try:
+            connection.execute(text(sql))
+        except Exception as e:
+            # Fallback for DBs that don't support IF NOT EXISTS (e.g. older SQLite)
+            if 'duplicate column' not in str(e).lower() and 'already exists' not in str(e).lower():
+                logger.warning(f'Migration skipped: {sql!r} — {e}')
+
+
 def create_app(config_name=None):
     app = Flask(__name__)
 
@@ -89,10 +104,14 @@ def create_app(config_name=None):
                 connection.execute(text('SELECT pg_advisory_lock(:lock_id)'), {'lock_id': lock_id})
                 try:
                     db.metadata.create_all(bind=connection)
+                    # Incremental column migrations (safe – no-op if column already exists)
+                    _run_column_migrations(connection)
                 finally:
                     connection.execute(text('SELECT pg_advisory_unlock(:lock_id)'), {'lock_id': lock_id})
         else:
             db.create_all()
+            with db.engine.begin() as connection:
+                _run_column_migrations(connection)
 
     # CLI commands
     register_cli_commands(app)

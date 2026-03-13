@@ -917,6 +917,18 @@ def settings():
             if value:
                 AppConfig.set(key, value, desc)
 
+        discovery_minutes = request.form.get('discovery_interval_minutes', '').strip()
+        if discovery_minutes:
+            AppConfig.set('discovery_interval_seconds', str(int(discovery_minutes) * 60), 'Discovery interval (seconds)')
+
+        audience_minutes = request.form.get('audience_scan_interval_minutes', '').strip()
+        if audience_minutes:
+            AppConfig.set('audience_scan_interval', str(int(audience_minutes) * 60), 'Audience scan interval (seconds)')
+
+        min_subscribers = request.form.get('min_subscribers_filter', '').strip()
+        if min_subscribers:
+            AppConfig.set('discovery_min_subscribers', min_subscribers, 'Min subscribers for discovery filter')
+
         flash('Settings saved.', 'success')
         return redirect(url_for('admin.settings'))
 

@@ -189,6 +189,7 @@ class Contact(db.Model):
     # Category: admin, competitor, bot, promoter, spam, target_audience
     category = db.Column(db.String(20), default='target_audience')
     status = db.Column(db.String(20), default='identified')  # identified, invited, responded, blocked
+    access_hash = db.Column(db.BigInteger)  # Required to message user after entity cache is cleared
     invitation_sent = db.Column(db.Boolean, default=False)
     invitation_sent_at = db.Column(db.DateTime)
     is_valid = db.Column(db.Boolean, default=True)  # False if contact not found in Telegram

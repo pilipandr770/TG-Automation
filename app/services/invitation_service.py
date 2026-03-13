@@ -3,6 +3,7 @@ import random
 import logging
 from datetime import datetime, timedelta
 from sqlalchemy.exc import IntegrityError
+from flask import current_app
 from app import db
 from app.models import Contact, InvitationTemplate, InvitationLog, AppConfig
 
@@ -28,13 +29,24 @@ class InvitationService:
             return None
         return random.choice(templates)
 
-    def personalize_message(self, template, contact):
+    def personalize_message(self, template, contact, target_channel=''):
         """Replace placeholders in template with contact data."""
         message = template.body
         message = message.replace('{first_name}', contact.first_name or '')
         message = message.replace('{username}', contact.username or '')
         message = message.replace('{last_name}', contact.last_name or '')
+        message = message.replace('{channel}', target_channel or '')
         return message.strip()
+
+    def _get_target_channel(self) -> str:
+        target_channel = AppConfig.get('target_channel')
+        if target_channel:
+            return target_channel
+
+        try:
+            return current_app.config.get('TELEGRAM_TARGET_CHANNEL', '@your_channel') or '@your_channel'
+        except RuntimeError:
+            return '@your_channel'
 
     async def send_invitation(self, contact, template):
         """Send invitation message to a contact."""
@@ -50,11 +62,25 @@ class InvitationService:
                 return False
 
             # Personalize message
-            message_text = self.personalize_message(template, contact)
-            target_channel = AppConfig.get('target_channel', '@your_channel')
+            target_channel = self._get_target_channel()
+            message_text = self.personalize_message(template, contact, target_channel)
+
+            # If the template doesn't already contain the channel link, append it automatically
+            if target_channel not in message_text:
+                message_text = f'{message_text}\n\n{target_channel}'
+
+            # Resolve the peer: prefer username, then InputPeerUser with access_hash,
+            # then plain user_id (works only if entity is still in Telethon cache).
+            from telethon.tl.types import InputPeerUser
+            if contact.username:
+                peer = contact.username if contact.username.startswith('@') else f'@{contact.username}'
+            elif contact.access_hash:
+                peer = InputPeerUser(contact.telegram_id, contact.access_hash)
+            else:
+                peer = contact.telegram_id
 
             # Send message
-            await client.send_message(contact.telegram_id, message_text)
+            await client.send_message(peer, message_text)
 
             # Log successful send - check if log already exists
             existing_log = InvitationLog.query.filter_by(contact_id=contact.id).first()

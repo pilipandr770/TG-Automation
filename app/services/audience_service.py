@@ -37,7 +37,15 @@ class AudienceService:
         try:
             from app.models import AppConfig
             # Default 600 seconds (10 min) for continuous operation, can be overridden in config
-            return int(AppConfig.get('audience_scan_interval', '600'))
+            value = AppConfig.get('audience_scan_interval')
+            if value is not None:
+                return int(value)
+
+            minutes = AppConfig.get('audience_scan_interval_minutes')
+            if minutes is not None:
+                return int(minutes) * 60
+
+            return 600
         except (TypeError, ValueError):
             return 600
 
@@ -107,6 +115,7 @@ class AudienceService:
 
                 results.append({
                     'user_id': sender.id,
+                    'access_hash': getattr(sender, 'access_hash', None),
                     'username': sender.username,
                     'first_name': getattr(sender, 'first_name', '') or '',
                     'last_name': getattr(sender, 'last_name', '') or '',
@@ -433,6 +442,7 @@ class AudienceService:
 
                     contact = Contact(
                         telegram_id=user_id,
+                        access_hash=msg_data.get('access_hash'),
                         username=msg_data.get('username'),
                         first_name=msg_data.get('first_name'),
                         last_name=msg_data.get('last_name'),
