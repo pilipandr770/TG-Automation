@@ -19,6 +19,8 @@ COST_TABLE = {
     'gpt-4o': {'input': 2.50, 'output': 10.00},
 }
 DEFAULT_MODEL = 'gpt-4o-mini'
+DEFAULT_TIMEOUT_SECONDS = 25.0
+DEFAULT_MAX_RETRIES = 1
 
 
 class OpenAIService:
@@ -55,7 +57,20 @@ class OpenAIService:
 
         if self._client is None or resolved_key != self._api_key:
             self._api_key = resolved_key
-            self._client = OpenAI(api_key=self._api_key)
+            timeout = self._run_with_app_context(
+                self._get_request_timeout,
+                fallback=DEFAULT_TIMEOUT_SECONDS,
+            )
+            max_retries = self._run_with_app_context(
+                self._get_max_retries,
+                fallback=DEFAULT_MAX_RETRIES,
+            )
+            self._client = OpenAI(
+                api_key=self._api_key,
+                timeout=timeout,
+                max_retries=max_retries,
+            )
+            logger.info('Initialized OpenAI client with timeout=%ss max_retries=%s', timeout, max_retries)
         return self._client
 
     # ── config helpers (need Flask app context) ──────────────────────────
@@ -85,6 +100,26 @@ class OpenAIService:
             return float(AppConfig.get('openai_daily_budget', '5.0'))
         except (TypeError, ValueError):
             return 5.0
+
+    def _get_request_timeout(self) -> float:
+        from app.models import AppConfig
+        try:
+            value = AppConfig.get('openai_timeout_seconds')
+            if value is not None:
+                return max(5.0, min(float(value), 120.0))
+        except (TypeError, ValueError):
+            pass
+        return DEFAULT_TIMEOUT_SECONDS
+
+    def _get_max_retries(self) -> int:
+        from app.models import AppConfig
+        try:
+            value = AppConfig.get('openai_max_retries')
+            if value is not None:
+                return max(0, min(int(value), 5))
+        except (TypeError, ValueError):
+            pass
+        return DEFAULT_MAX_RETRIES
 
     # ── budget guard ─────────────────────────────────────────────────────
 

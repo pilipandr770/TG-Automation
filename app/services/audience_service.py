@@ -305,61 +305,19 @@ class AudienceService:
                 'confidence': category_confidence,
                 'reason': category_reason
             }
-        
-        # Step 4: If is target_audience, check if matches criteria
-        system_prompt_match = criteria.openai_prompt or (
-            'You are an audience analyst. Given a user message and target criteria, '
-            'decide if this user matches the target audience.\n'
-            'Reply in JSON: {"match": true/false, "confidence": 0.0-1.0, "reason": "..."}'
+
+        logger.info(
+            '[MATCH RESULT] @%s treated as target_audience with confidence=%.2f for criteria "%s"',
+            username,
+            category_confidence,
+            criteria.name,
         )
-
-        user_msg_match = (
-            f'Criteria: {criteria.name}\n'
-            f'Keywords: {criteria.keywords or "N/A"}\n\n'
-            f'User message: {message_text[:500]}'
-        )
-
-        logger.debug(f'[OPENAI QUERY] Matching @{username} against criteria "{criteria.name}"')
-
-        # Run blocking OpenAI call in executor to avoid freezing the Telethon event loop.
-        ai_match = await _loop.run_in_executor(
-            None,
-            lambda: self._openai.chat(
-                system_prompt=system_prompt_match,
-                user_message=user_msg_match,
-                module='audience_match',
-            )
-        )
-
-        # Default for target_audience: use categorization confidence
-        default = {
+        return {
             'category': 'target_audience',
-            'match': False,
-            'confidence': category_confidence,  # Use categorization confidence, not 0.3
-            'reason': category_reason
+            'match': True,
+            'confidence': category_confidence,
+            'reason': category_reason,
         }
-
-        if not ai_match.get('content'):
-            logger.warning(f'[OPENAI ERROR] No content in matching response for @{username}')
-            return default
-
-        try:
-            content = ai_match['content'].strip()
-            logger.debug(f'[OPENAI RESPONSE] (match) Raw: {content}')
-            if not content:  # Empty response
-                return default
-            parsed = json.loads(content)
-            result = {
-                'category': 'target_audience',
-                'match': bool(parsed.get('match', False)),
-                'confidence': float(parsed.get('confidence', 0.6)),
-                'reason': str(parsed.get('reason', '')),
-            }
-            logger.info(f'[MATCH RESULT] @{username} match={result["match"]} confidence={result["confidence"]:.2f}')
-            return result
-        except (json.JSONDecodeError, ValueError, TypeError, AttributeError) as e:
-            logger.warning('Could not parse match AI response: %s | Content: %s | Using categorization confidence: %.2f', e, repr(ai_match.get('content')), category_confidence)
-            return default
 
     async def run_audience_scan(self) -> dict:
         """One full audience scan across all joined channels.
