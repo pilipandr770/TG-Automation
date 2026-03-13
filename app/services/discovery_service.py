@@ -163,6 +163,26 @@ class DiscoveryService:
         except (TypeError, ValueError):
             return 1440
 
+    def _get_openai_timeout_seconds(self) -> float:
+        try:
+            from app.models import AppConfig
+            value = AppConfig.get('discovery_openai_timeout_seconds')
+            if value is not None:
+                return max(5.0, min(float(value), 60.0))
+            return 20.0
+        except (TypeError, ValueError):
+            return 20.0
+
+    def _get_keywords_per_cycle_limit(self) -> int:
+        try:
+            from app.models import AppConfig
+            value = AppConfig.get('discovery_keywords_per_cycle')
+            if value is not None:
+                return max(5, min(int(value), 100))
+            return 20
+        except (TypeError, ValueError):
+            return 20
+
     def _is_keyword_eligible(self, keyword, now: datetime | None = None) -> bool:
         now = now or datetime.utcnow()
         next_eligible_at = getattr(keyword, 'next_eligible_at', None)
@@ -260,6 +280,18 @@ class DiscoveryService:
         self._join_rate_limited_until = until
         logger.warning('[JOIN] Entering join cooldown until %s', until.isoformat())
 
+    def _handle_join_flood_wait(self, channel_title: str, error: FloodWaitError) -> None:
+        wait_seconds = getattr(error, 'seconds', 3600) or 3600
+        buffer_seconds = min(60, max(10, int(wait_seconds * 0.1)))
+        total_seconds = wait_seconds + buffer_seconds
+        logger.warning(
+            '[JOIN] FloodWait on %s: %ss required, switching to non-blocking cooldown for %ss',
+            channel_title,
+            wait_seconds,
+            total_seconds,
+        )
+        self._mark_join_rate_limited(total_seconds)
+
     async def _get_full_channel_info(self, client, channel_entity):
         """Fetch full channel info when we need linked discussion details."""
         if not isinstance(channel_entity, types.Channel):
@@ -310,8 +342,7 @@ class DiscoveryService:
             logger.info(f'✅ [ALREADY JOINED] {channel_title} ({channel_id}) - already a member')
             return True
         except FloodWaitError as e:
-            logger.warning(f'[JOIN] FloodWait on {channel_title}: {e}')
-            await self._rate_limiter.handle_flood_wait(e)
+            self._handle_join_flood_wait(channel_title, e)
             return False
         except ChannelPrivateError:
             logger.warning(f'[JOIN] Channel is private: {channel_title} ({channel_id})')
@@ -329,6 +360,9 @@ class DiscoveryService:
             except UserAlreadyParticipantError:
                 logger.info(f'✅ [ALREADY JOINED] {channel_title} ({channel_id}) - already a member')
                 return True
+            except FloodWaitError as e:
+                self._handle_join_flood_wait(channel_title, e)
+                return False
             except Exception as e:
                 logger.warning(f'[JOIN] Strategy 2 failed: {type(e).__name__}: {str(e)[:100]}')
 
@@ -340,6 +374,9 @@ class DiscoveryService:
         except UserAlreadyParticipantError:
             logger.info(f'✅ [ALREADY JOINED] {channel_title} ({channel_id}) - already a member')
             return True
+        except FloodWaitError as e:
+            self._handle_join_flood_wait(channel_title, e)
+            return False
         except Exception as e:
             logger.error(f'[JOIN] All strategies failed for {channel_title} ({channel_id}): {type(e).__name__}: {str(e)[:150]}')
             return False
@@ -528,14 +565,27 @@ class DiscoveryService:
 
         # Run blocking OpenAI call in executor so the Telethon event loop is not frozen.
         _loop = asyncio.get_running_loop()
-        ai_result = await _loop.run_in_executor(
-            None,
-            lambda: self._openai.chat(
-                system_prompt=self._get_topic_prompt(),
-                user_message=user_msg,
-                module='discovery',
+        timeout_seconds = self._get_openai_timeout_seconds()
+        try:
+            ai_result = await asyncio.wait_for(
+                _loop.run_in_executor(
+                    None,
+                    lambda: self._openai.chat(
+                        system_prompt=self._get_topic_prompt(),
+                        user_message=user_msg,
+                        module='discovery',
+                    )
+                ),
+                timeout=timeout_seconds,
             )
-        )
+        except asyncio.TimeoutError:
+            result['reason'] = f'Discovery OpenAI timeout after {timeout_seconds:.1f}s'
+            logger.warning('[EVAL %s] %s', channel_title, result['reason'])
+            return result
+        except Exception as e:
+            result['reason'] = f'Discovery OpenAI error: {str(e)[:120]}'
+            logger.warning('[EVAL %s] %s', channel_title, result['reason'])
+            return result
 
         topic_score = 0.0
         if ai_result.get('content'):
@@ -728,14 +778,25 @@ Reply with ONLY keywords, one per line, no numbering'''
 
         # Run blocking OpenAI call in executor so the Telethon event loop is not frozen.
         _loop = asyncio.get_running_loop()
-        result = await _loop.run_in_executor(
-            None,
-            lambda: self._openai.chat(
-                system_prompt='You are a Telegram search keyword expert. Generate practical, searchable keywords.',
-                user_message=prompt,
-                module='discovery',
+        timeout_seconds = self._get_openai_timeout_seconds()
+        try:
+            result = await asyncio.wait_for(
+                _loop.run_in_executor(
+                    None,
+                    lambda: self._openai.chat(
+                        system_prompt='You are a Telegram search keyword expert. Generate practical, searchable keywords.',
+                        user_message=prompt,
+                        module='discovery',
+                    )
+                ),
+                timeout=timeout_seconds,
             )
-        )
+        except asyncio.TimeoutError:
+            logger.warning('[GENERATE VARIANTS] OpenAI timed out for "%s" after %.1fs', keyword, timeout_seconds)
+            return []
+        except Exception as e:
+            logger.warning('[GENERATE VARIANTS] OpenAI error for "%s": %s', keyword, str(e)[:140])
+            return []
 
         if not result.get('content'):
             logger.warning(f'[GENERATE VARIANTS] No response from OpenAI for "{keyword}"')
@@ -822,13 +883,22 @@ Reply with ONLY keywords, one per line, no numbering'''
         stats['keywords_on_cooldown'] = len(all_keywords) - len(keywords)
         keywords.sort(
             key=lambda kw: (
-                kw.priority or 0,
-                float(getattr(kw, 'quality_score', None) or 1.0),
-                -(kw.generation_round or 0),
+                -(kw.priority or 0),
+                -(float(getattr(kw, 'quality_score', None) or 1.0)),
                 kw.last_used or datetime.min,
+                kw.created_at or datetime.min,
+                kw.id or 0,
             ),
-            reverse=True,
         )
+        keywords_per_cycle_limit = self._get_keywords_per_cycle_limit()
+        total_eligible_keywords = len(keywords)
+        if len(keywords) > keywords_per_cycle_limit:
+            logger.info(
+                '[KEYWORDS] Limiting discovery cycle to %s of %s eligible keywords',
+                keywords_per_cycle_limit,
+                total_eligible_keywords,
+            )
+            keywords = keywords[:keywords_per_cycle_limit]
         
         # CRITICAL: Check if keywords exist - don't proceed if empty
         if not keywords or len(keywords) == 0:
@@ -855,7 +925,10 @@ Reply with ONLY keywords, one per line, no numbering'''
             await asyncio.sleep(30)
             return stats
         
-        logger.info(f'[KEYWORDS] Processing {len(keywords)} keywords: {[kw.keyword for kw in keywords]}')
+        logger.info(
+            f'[KEYWORDS] Processing {len(keywords)} keywords this cycle '
+            f'(eligible={total_eligible_keywords}, cooldown={stats["keywords_on_cooldown"]}): {[kw.keyword for kw in keywords]}'
+        )
 
         for kw in keywords:
             logger.info(f'[SEARCH] Keyword: "{kw.keyword}"')
