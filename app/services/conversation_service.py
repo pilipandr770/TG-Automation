@@ -22,6 +22,36 @@ class ConversationService:
     def __init__(self, client_manager, openai_service):
         self.client_manager = client_manager
         self.openai_service = openai_service
+        self._recent_private_events = {}
+
+    def _prune_recent_private_events(self):
+        cutoff = datetime.utcnow().timestamp() - 300
+        stale_keys = [key for key, ts in self._recent_private_events.items() if ts < cutoff]
+        for key in stale_keys:
+            self._recent_private_events.pop(key, None)
+
+    def _is_duplicate_private_event(self, telegram_user_id, message_id, message_text):
+        self._prune_recent_private_events()
+        key = (telegram_user_id, message_id, (message_text or '')[:120])
+        now_ts = datetime.utcnow().timestamp()
+        if key in self._recent_private_events:
+            return True
+        self._recent_private_events[key] = now_ts
+        return False
+
+    @staticmethod
+    def _should_ignore_private_sender(sender) -> tuple[bool, str]:
+        if sender is None:
+            return True, 'missing sender'
+
+        if getattr(sender, 'bot', False):
+            return True, 'telegram bot account'
+
+        username = (getattr(sender, 'username', None) or '').strip().lower()
+        if username in {'combot', 'grouphelpbot', 'botfather', 'manybot', 'controllerbot'}:
+            return True, f'ignored service account @{username}'
+
+        return False, ''
 
     def get_or_create_conversation(self, telegram_user_id, username=None, first_name=None):
         """Get existing or create new conversation."""
@@ -210,6 +240,11 @@ class ConversationService:
             telegram_user_id = sender.id
             username = sender.username
             first_name = sender.first_name
+
+            ignore_sender, ignore_reason = self._should_ignore_private_sender(sender)
+            if ignore_sender:
+                logger.info(f'[MESSAGE SKIP] Ignoring private message from {telegram_user_id}: {ignore_reason}')
+                return
             
             logger.info(f'[MESSAGE] From user {telegram_user_id} ({username}, {first_name})')
 
@@ -279,6 +314,10 @@ class ConversationService:
                 return
 
             if not user_message_text:
+                return
+
+            if self._is_duplicate_private_event(telegram_user_id, event.message.id, user_message_text):
+                logger.info(f'[MESSAGE SKIP] Duplicate private event ignored for {telegram_user_id} message_id={event.message.id}')
                 return
 
             # Save user message
