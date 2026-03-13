@@ -32,6 +32,7 @@ class DiscoveryService:
         self._client_manager = get_telegram_client_manager()
         self._rate_limiter = get_rate_limiter()
         self._openai = get_openai_service()
+        self._join_rate_limited_until: datetime | None = None
 
     # ── helpers ───────────────────────────────────────────────────────────
 
@@ -91,6 +92,44 @@ class DiscoveryService:
             return 300
         except (TypeError, ValueError):
             return 300  # 5 minutes - fast for testing/local use
+
+    def _get_keyword_regeneration_threshold(self) -> int:
+        try:
+            from app.models import AppConfig
+            value = AppConfig.get('discovery_regeneration_cycles_threshold')
+            if value is not None:
+                return max(2, min(int(value), 10))
+            return 4
+        except (TypeError, ValueError):
+            return 4
+
+    def _get_max_active_keywords(self) -> int:
+        try:
+            from app.models import AppConfig
+            value = AppConfig.get('discovery_max_active_keywords')
+            if value is not None:
+                return max(10, min(int(value), 200))
+            return 40
+        except (TypeError, ValueError):
+            return 40
+
+    def _get_max_regenerated_variants_per_cycle(self) -> int:
+        try:
+            from app.models import AppConfig
+            value = AppConfig.get('discovery_max_regenerated_variants_per_cycle')
+            if value is not None:
+                return max(0, min(int(value), 100))
+            return 10
+        except (TypeError, ValueError):
+            return 10
+
+    def _is_join_rate_limited(self) -> bool:
+        return bool(self._join_rate_limited_until and datetime.utcnow() < self._join_rate_limited_until)
+
+    def _mark_join_rate_limited(self, cooldown_seconds: int = 3600) -> None:
+        until = datetime.utcnow() + timedelta(seconds=max(60, cooldown_seconds))
+        self._join_rate_limited_until = until
+        logger.warning('[JOIN] Entering join cooldown until %s', until.isoformat())
 
     async def _get_full_channel_info(self, client, channel_entity):
         """Fetch full channel info when we need linked discussion details."""
@@ -411,8 +450,13 @@ class DiscoveryService:
         channel_id = getattr(channel_entity, 'id', '?')
         channel_username = getattr(channel_entity, 'username', None)
 
+        if self._is_join_rate_limited():
+            logger.warning(f'[JOIN] Cooldown active, skipping join for {channel_title} ({channel_id}) until {self._join_rate_limited_until.isoformat()}')
+            return False
+
         if not await self._rate_limiter.acquire('join_channel'):
             logger.warning(f'[JOIN] Rate limited for {channel_title} ({channel_id})')
+            self._mark_join_rate_limited()
             return False
 
         joined = await self._join_entity(client, channel_entity)
@@ -439,7 +483,7 @@ class DiscoveryService:
             'keywords_checked': 0,
             'keywords_exhausted': 0,
             'variants_generated': 0,
-            'cycles_threshold': 2,  # More aggressive: regenerate after 2 cycles without results
+            'cycles_threshold': self._get_keyword_regeneration_threshold(),
         }
 
         # Get business goal / target topic for context
@@ -447,10 +491,28 @@ class DiscoveryService:
         
         keywords = SearchKeyword.query.filter_by(active=True).all()
         stats['keywords_checked'] = len(keywords)
+
+        if len(keywords) >= self._get_max_active_keywords():
+            logger.info(
+                '[REGENERATE SKIP] Active keyword count already high (%s >= %s), skipping regeneration this cycle',
+                len(keywords),
+                self._get_max_active_keywords(),
+            )
+            return stats
+
+        if self._is_join_rate_limited():
+            logger.info('[REGENERATE SKIP] Join cooldown is active, skipping keyword regeneration this cycle')
+            return stats
+
+        variants_budget = self._get_max_regenerated_variants_per_cycle()
         
         logger.info(f'[REGENERATE CHECK] Checking {len(keywords)} active keywords for regeneration')
 
         for kw in keywords:
+            if stats['variants_generated'] >= variants_budget:
+                logger.info('[REGENERATE LIMIT] Variant budget reached for this cycle: %s', variants_budget)
+                break
+
             # Key improvement: also check regenerated keywords (round > 0)
             # This allows multiple levels of refinement
             
@@ -472,6 +534,10 @@ class DiscoveryService:
                     logger.info(f'[REGENERATE] Generated {len(variants)} variants for "{kw.keyword}":')
                 
                 for variant in variants:
+                    if stats['variants_generated'] >= variants_budget:
+                        logger.info('[REGENERATE LIMIT] Variant budget reached while processing "%s"', kw.keyword)
+                        break
+
                     # Check if variant already exists
                     existing = SearchKeyword.query.filter_by(keyword=variant).first()
                     if existing:
@@ -717,6 +783,8 @@ Reply with ONLY keywords, one per line, no numbering'''
                         else:
                             existing.status = 'join_failed'
                             logger.warning(f'❌ [REJOIN FAILED] {channel_title} - retry join attempt failed')
+                            if self._is_join_rate_limited():
+                                logger.info('[DISCOVERY] Join cooldown activated mid-cycle, stopping further join retries for now')
                     else:
                         existing.status = 'found'
                         logger.info(f'[RETRY SKIP] {channel_title} - still did not pass evaluation filters')
@@ -759,6 +827,8 @@ Reply with ONLY keywords, one per line, no numbering'''
                     else:
                         logger.warning(f'❌ [JOIN FAILED] {channel_title} - join attempt failed, saving as not_joined')
                         discovered.status = 'join_failed'
+                        if self._is_join_rate_limited():
+                            logger.info('[DISCOVERY] Join cooldown activated mid-cycle, stopping further join attempts for now')
                 else:
                     logger.info(f'[SKIP] {channel_title} - did not pass evaluation filters')
 
