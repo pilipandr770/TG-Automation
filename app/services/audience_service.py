@@ -49,6 +49,40 @@ class AudienceService:
         except (TypeError, ValueError):
             return 600
 
+    async def _save_contact_to_telegram_profile(self, msg_data: dict) -> bool:
+        """Best-effort save of a newly discovered target contact into Telegram contacts."""
+        client = await self._client_manager.get_client()
+        if client is None:
+            logger.warning('[CONTACT SAVE] No Telegram client available')
+            return False
+
+        try:
+            if msg_data.get('access_hash'):
+                input_user = types.InputUser(msg_data['user_id'], msg_data['access_hash'])
+            elif msg_data.get('username'):
+                username = msg_data['username']
+                peer_ref = username if username.startswith('@') else f'@{username}'
+                input_user = await client.get_input_entity(peer_ref)
+            else:
+                logger.info('[CONTACT SAVE] Skipping Telegram contact save for %s: no username/access_hash', msg_data.get('user_id'))
+                return False
+
+            first_name = (msg_data.get('first_name') or msg_data.get('username') or 'Telegram')[:64]
+            last_name = (msg_data.get('last_name') or '')[:64]
+
+            await client(functions.contacts.AddContactRequest(
+                id=input_user,
+                first_name=first_name,
+                last_name=last_name,
+                phone=''.join(ch for ch in (msg_data.get('phone') or '') if ch.isdigit() or ch == '+'),
+                add_phone_privacy_exception=False,
+            ))
+            logger.info('[CONTACT SAVE] Added contact %s to Telegram profile', msg_data.get('user_id'))
+            return True
+        except Exception as e:
+            logger.warning('[CONTACT SAVE] Failed to add %s to Telegram profile: %s', msg_data.get('user_id'), str(e)[:150])
+            return False
+
     # ── core methods ─────────────────────────────────────────────────────
 
     async def scan_channel_messages(
@@ -405,6 +439,7 @@ class AudienceService:
                         updated = True
                     if updated:
                         logger.info(f'[CONTACT UPDATE] Refreshed peer data for existing contact {existing.id} ({user_id})')
+                        await self._save_contact_to_telegram_profile(msg_data)
                     continue
 
                 for criteria in criteria_list:
@@ -470,6 +505,7 @@ class AudienceService:
                         status='identified',
                     )
                     db.session.add(contact)
+                    await self._save_contact_to_telegram_profile(msg_data)
                     # Only match once per user — break criteria loop
                     break
 

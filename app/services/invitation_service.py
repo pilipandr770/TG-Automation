@@ -14,12 +14,21 @@ logger = logging.getLogger(__name__)
 class InvitationService:
     _instance = None
 
+    STALE_ERROR_PATTERNS = (
+        'could not find the input entity',
+        'peeruser',
+        'user was deleted',
+        'user is deactivated',
+        'the specified user was deleted',
+    )
+
     def __init__(self, client_manager, rate_limiter):
         self.client_manager = client_manager
         self.rate_limiter = rate_limiter
 
     async def get_pending_contacts(self, limit=10):
         """Get contacts that haven't been invited yet and are valid."""
+        self.cleanup_stale_contacts()
         contacts = Contact.query.filter(
             Contact.invitation_sent.is_(False),
             Contact.is_valid.is_(True),
@@ -29,6 +38,35 @@ class InvitationService:
             ),
         ).order_by(Contact.created_at.desc()).limit(limit).all()
         return contacts
+
+    def cleanup_stale_contacts(self) -> int:
+        """Soft-clean contacts that are already known to be invalid from failed logs."""
+        stale_logs = InvitationLog.query.filter(
+            InvitationLog.status == 'failed',
+            InvitationLog.error_message.isnot(None),
+        ).all()
+
+        stale_contact_ids = {
+            log.contact_id
+            for log in stale_logs
+            if log.error_message and any(pattern in log.error_message.lower() for pattern in self.STALE_ERROR_PATTERNS)
+        }
+
+        if not stale_contact_ids:
+            return 0
+
+        updated = Contact.query.filter(Contact.id.in_(stale_contact_ids)).update(
+            {
+                Contact.is_valid: False,
+                Contact.invitation_sent: True,
+                Contact.status: 'blocked',
+                Contact.invitation_sent_at: datetime.utcnow(),
+            },
+            synchronize_session=False,
+        )
+        db.session.commit()
+        logger.info('Cleaned %s stale invalid contacts from invitation queue', updated)
+        return updated
 
     async def select_template(self):
         """Select a random active invitation template."""

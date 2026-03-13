@@ -124,6 +124,80 @@ class DiscoveryService:
 
         return False, 'broadcast channel without linked discussion', about
 
+    async def _join_entity(self, client, channel_entity, *, related: bool = False) -> bool:
+        """Join a Telegram channel/group entity using multiple strategies."""
+        channel_title = getattr(channel_entity, 'title', 'Unknown')
+        channel_id = getattr(channel_entity, 'id', '?')
+        channel_username = getattr(channel_entity, 'username', None)
+        relation_label = 'related discussion' if related else 'primary'
+
+        logger.info(f'[JOIN] Attempting to join {relation_label}: {channel_title} ({channel_id}) username={channel_username}')
+
+        try:
+            logger.debug(f'[JOIN] Strategy 1: Direct JoinChannelRequest with entity ({relation_label})')
+            await client(functions.channels.JoinChannelRequest(channel=channel_entity))
+            logger.info(f'✅ [JOIN SUCCESS] Joined {channel_title} ({channel_id}) - Strategy 1')
+            return True
+        except UserAlreadyParticipantError:
+            logger.info(f'✅ [ALREADY JOINED] {channel_title} ({channel_id}) - already a member')
+            return True
+        except FloodWaitError as e:
+            logger.warning(f'[JOIN] FloodWait on {channel_title}: {e}')
+            await self._rate_limiter.handle_flood_wait(e)
+            return False
+        except ChannelPrivateError:
+            logger.warning(f'[JOIN] Channel is private: {channel_title} ({channel_id})')
+            return False
+        except Exception as e:
+            logger.warning(f'[JOIN] Strategy 1 failed: {type(e).__name__}: {str(e)[:100]}')
+
+        if channel_username:
+            try:
+                logger.debug(f'[JOIN] Strategy 2: JoinChannelRequest with username @{channel_username}')
+                resolved = await client.get_entity(f'@{channel_username}')
+                await client(functions.channels.JoinChannelRequest(channel=resolved))
+                logger.info(f'✅ [JOIN SUCCESS] Joined {channel_title} ({channel_id}) - Strategy 2 (username)')
+                return True
+            except UserAlreadyParticipantError:
+                logger.info(f'✅ [ALREADY JOINED] {channel_title} ({channel_id}) - already a member')
+                return True
+            except Exception as e:
+                logger.warning(f'[JOIN] Strategy 2 failed: {type(e).__name__}: {str(e)[:100]}')
+
+        try:
+            logger.debug(f'[JOIN] Strategy 3: JoinChannelRequest with channel ID {channel_id}')
+            await client(functions.channels.JoinChannelRequest(channel=channel_id))
+            logger.info(f'✅ [JOIN SUCCESS] Joined {channel_title} ({channel_id}) - Strategy 3 (ID)')
+            return True
+        except UserAlreadyParticipantError:
+            logger.info(f'✅ [ALREADY JOINED] {channel_title} ({channel_id}) - already a member')
+            return True
+        except Exception as e:
+            logger.error(f'[JOIN] All strategies failed for {channel_title} ({channel_id}): {type(e).__name__}: {str(e)[:150]}')
+            return False
+
+    async def _join_linked_discussion(self, client, channel_entity) -> None:
+        """If a broadcast channel has a linked discussion group, join it too."""
+        if not isinstance(channel_entity, types.Channel):
+            return
+
+        full_chat = await self._get_full_channel_info(client, channel_entity)
+        linked_chat_id = getattr(full_chat, 'linked_chat_id', None)
+        if not linked_chat_id or linked_chat_id == getattr(channel_entity, 'id', None):
+            return
+
+        try:
+            linked_entity = await client.get_entity(linked_chat_id)
+        except Exception as e:
+            logger.warning('[JOIN] Failed to resolve linked discussion chat %s: %s', linked_chat_id, str(e)[:120])
+            return
+
+        if not await self._rate_limiter.acquire('join_channel'):
+            logger.warning('[JOIN] Rate limited before joining linked discussion %s', linked_chat_id)
+            return
+
+        await self._join_entity(client, linked_entity, related=True)
+
     # ── core methods ─────────────────────────────────────────────────────
 
     async def search_channels(self, keyword: str) -> list:
@@ -341,60 +415,10 @@ class DiscoveryService:
             logger.warning(f'[JOIN] Rate limited for {channel_title} ({channel_id})')
             return False
 
-        logger.info(f'[JOIN] Attempting to join: {channel_title} ({channel_id}) username={channel_username}')
-
-        # Strategy 1: Direct join with entity
-        try:
-            logger.debug(f'[JOIN] Strategy 1: Direct JoinChannelRequest with entity')
-            await client(functions.channels.JoinChannelRequest(
-                channel=channel_entity,
-            ))
-            logger.info(f'✅ [JOIN SUCCESS] Joined {channel_title} ({channel_id}) - Strategy 1')
-            return True
-        except UserAlreadyParticipantError:
-            logger.info(f'✅ [ALREADY JOINED] {channel_title} ({channel_id}) - already a member')
-            return True
-        except FloodWaitError as e:
-            logger.warning(f'[JOIN] FloodWait on {channel_title}: {e}')
-            await self._rate_limiter.handle_flood_wait(e)
-            return False
-        except ChannelPrivateError as e:
-            logger.warning(f'[JOIN] Channel is private: {channel_title} ({channel_id})')
-            return False
-        except Exception as e:
-            logger.warning(f'[JOIN] Strategy 1 failed: {type(e).__name__}: {str(e)[:100]}')
-
-        # Strategy 2: Try with username if available
-        if channel_username:
-            try:
-                logger.debug(f'[JOIN] Strategy 2: JoinChannelRequest with username @{channel_username}')
-                # Resolve username to entity
-                resolved = await client.get_entity(f'@{channel_username}')
-                await client(functions.channels.JoinChannelRequest(
-                    channel=resolved,
-                ))
-                logger.info(f'✅ [JOIN SUCCESS] Joined {channel_title} ({channel_id}) - Strategy 2 (username)')
-                return True
-            except UserAlreadyParticipantError:
-                logger.info(f'✅ [ALREADY JOINED] {channel_title} ({channel_id}) - already a member')
-                return True
-            except Exception as e:
-                logger.warning(f'[JOIN] Strategy 2 failed: {type(e).__name__}: {str(e)[:100]}')
-
-        # Strategy 3: Try with channel ID
-        try:
-            logger.debug(f'[JOIN] Strategy 3: JoinChannelRequest with channel ID {channel_id}')
-            await client(functions.channels.JoinChannelRequest(
-                channel=channel_id,
-            ))
-            logger.info(f'✅ [JOIN SUCCESS] Joined {channel_title} ({channel_id}) - Strategy 3 (ID)')
-            return True
-        except UserAlreadyParticipantError:
-            logger.info(f'✅ [ALREADY JOINED] {channel_title} ({channel_id}) - already a member')
-            return True
-        except Exception as e:
-            logger.error(f'[JOIN] All strategies failed for {channel_title} ({channel_id}): {type(e).__name__}: {str(e)[:150]}')
-            return False
+        joined = await self._join_entity(client, channel_entity)
+        if joined:
+            await self._join_linked_discussion(client, channel_entity)
+        return joined
 
     # ── smart keyword regeneration ───────────────────────────────────────
 
