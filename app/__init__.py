@@ -17,6 +17,178 @@ csrf = CSRFProtect()
 logger = logging.getLogger(__name__)
 
 
+def _seed_fresh_database_defaults(app):
+    """Populate a fresh operational database with a minimal working baseline."""
+    from app.models import (
+        AppConfig,
+        AudienceCriteria,
+        ContentSource,
+        InvitationTemplate,
+        SearchKeyword,
+    )
+
+    target_channel = (
+        app.config.get('TELEGRAM_TARGET_CHANNEL')
+        or os.getenv('TELEGRAM_TARGET_CHANNEL')
+        or '@your_channel'
+    )
+
+    config_defaults = {
+        'business_goal': 'Find active crypto and web3 communities, identify engaged members, and invite them to the target Telegram channel.',
+        'discovery_topic_context': 'crypto, web3, trading, blockchain, defi, meme coins, airdrops, ton',
+        'target_channel': target_channel,
+        'discovery_enabled': 'true',
+        'discovery_interval_minutes': '30',
+        'discovery_interval_seconds': '1800',
+        'min_subscribers_filter': '150',
+        'discovery_min_subscribers': '150',
+        'audience_scan_interval_minutes': '30',
+        'audience_scan_interval': '1800',
+        'invitation_batch_size': '15',
+        'daily_invitation_limit': '80',
+        'openai_enabled': 'true',
+    }
+
+    keywords = [
+        ('crypto', 'en', 100),
+        ('web3', 'en', 95),
+        ('blockchain', 'en', 90),
+        ('defi', 'en', 85),
+        ('ton', 'en', 80),
+        ('airdrop', 'en', 75),
+        ('meme coin', 'en', 70),
+        ('trading chat', 'en', 65),
+        ('crypto signals', 'en', 60),
+        ('altcoins', 'en', 55),
+        ('крипта', 'ru', 100),
+        ('криптовалюта', 'ru', 95),
+        ('блокчейн', 'ru', 90),
+        ('трейдинг', 'ru', 85),
+        ('дефи', 'ru', 80),
+        ('эйрдроп', 'ru', 75),
+        ('тон', 'ru', 70),
+        ('мемкоин', 'ru', 65),
+        ('крипто чат', 'ru', 60),
+        ('web3 чат', 'ru', 55),
+    ]
+
+    criteria = AudienceCriteria(
+        name='Crypto Community Members',
+        keywords='crypto,web3,blockchain,trading,defi,airdrop,ton,крипта,трейдинг',
+        openai_prompt=(
+            'Analyze the Telegram user message and profile in the context of crypto and web3 communities. '
+            'Return strict JSON with keys category, confidence, summary. '
+            'Use category=target_audience only for real engaged people interested in crypto, trading, blockchain, TON, DeFi, airdrops, or adjacent topics. '
+            'Use category=spam, promoter, bot, admin, or competitor when appropriate.'
+        ),
+        min_confidence=0.55,
+        active=True,
+    )
+
+    template = InvitationTemplate(
+        name='Crypto Invite RU',
+        body=(
+            'Привет, {first_name}! Видел твою активность в {channel}. '
+            'У нас собирается Telegram-канал про крипту, web3 и рабочие идеи по рынку. '
+            'Если интересно, загляни: {channel}'
+        ),
+        language='ru',
+        active=True,
+    )
+
+    sources = [
+        ContentSource(
+            name='Cointelegraph',
+            url='https://cointelegraph.com/rss',
+            source_type='rss',
+            language='en',
+            active=True,
+            fetch_interval_hours=6,
+        ),
+        ContentSource(
+            name='CoinDesk',
+            url='https://www.coindesk.com/arc/outboundfeeds/rss/',
+            source_type='rss',
+            language='en',
+            active=True,
+            fetch_interval_hours=6,
+        ),
+        ContentSource(
+            name='Bits Media',
+            url='https://bits.media/rss/',
+            source_type='rss',
+            language='ru',
+            active=True,
+            fetch_interval_hours=6,
+        ),
+    ]
+
+    for key, value in config_defaults.items():
+        if not AppConfig.query.filter_by(key=key).first():
+            db.session.add(AppConfig(key=key, value=value))
+
+    for keyword, language, priority in keywords:
+        exists = SearchKeyword.query.filter_by(keyword=keyword, language=language).first()
+        if not exists:
+            db.session.add(SearchKeyword(keyword=keyword, language=language, priority=priority, active=True))
+
+    if not AudienceCriteria.query.first():
+        db.session.add(criteria)
+
+    if not InvitationTemplate.query.first():
+        db.session.add(template)
+
+    if ContentSource.query.count() == 0:
+        db.session.add_all(sources)
+
+    db.session.commit()
+    logger.warning('Seeded fresh database defaults for target channel %s', target_channel)
+
+
+def _bootstrap_fresh_database(app):
+    """Seed baseline data only when the operational tables are empty."""
+    from app.models import (
+        AppConfig,
+        AudienceCriteria,
+        Contact,
+        ContentSource,
+        DiscoveredChannel,
+        InvitationTemplate,
+        SearchKeyword,
+    )
+
+    should_seed = False
+    database_uri = app.config.get('SQLALCHEMY_DATABASE_URI', '') or ''
+    lock_id = 735018
+
+    try:
+        if database_uri.startswith('postgresql'):
+            db.session.execute(text('SELECT pg_advisory_lock(:lock_id)'), {'lock_id': lock_id})
+
+        should_seed = all([
+            AppConfig.query.count() == 0,
+            SearchKeyword.query.count() == 0,
+            DiscoveredChannel.query.count() == 0,
+            Contact.query.count() == 0,
+            AudienceCriteria.query.count() == 0,
+            InvitationTemplate.query.count() == 0,
+            ContentSource.query.count() == 0,
+        ])
+
+        if should_seed:
+            _seed_fresh_database_defaults(app)
+    except Exception as e:
+        db.session.rollback()
+        logger.warning('Fresh-database bootstrap skipped: %s', e)
+    finally:
+        if database_uri.startswith('postgresql'):
+            try:
+                db.session.execute(text('SELECT pg_advisory_unlock(:lock_id)'), {'lock_id': lock_id})
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+
+
 def _run_column_migrations(connection):
     """Apply incremental ADD COLUMN migrations safely (idempotent)."""
     migrations = [
@@ -112,6 +284,8 @@ def create_app(config_name=None):
             db.create_all()
             with db.engine.begin() as connection:
                 _run_column_migrations(connection)
+
+        _bootstrap_fresh_database(app)
 
     # CLI commands
     register_cli_commands(app)
