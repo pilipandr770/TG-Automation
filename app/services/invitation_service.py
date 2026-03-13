@@ -40,7 +40,7 @@ class InvitationService:
         return contacts
 
     def cleanup_stale_contacts(self) -> int:
-        """Soft-clean contacts that are already known to be invalid from failed logs."""
+        """Hard-delete contacts that are already known to be invalid from failed logs."""
         stale_logs = InvitationLog.query.filter(
             InvitationLog.status == 'failed',
             InvitationLog.error_message.isnot(None),
@@ -55,17 +55,10 @@ class InvitationService:
         if not stale_contact_ids:
             return 0
 
-        updated = Contact.query.filter(Contact.id.in_(stale_contact_ids)).update(
-            {
-                Contact.is_valid: False,
-                Contact.invitation_sent: True,
-                Contact.status: 'blocked',
-                Contact.invitation_sent_at: datetime.utcnow(),
-            },
-            synchronize_session=False,
-        )
+        InvitationLog.query.filter(InvitationLog.contact_id.in_(stale_contact_ids)).delete(synchronize_session=False)
+        updated = Contact.query.filter(Contact.id.in_(stale_contact_ids)).delete(synchronize_session=False)
         db.session.commit()
-        logger.info('Cleaned %s stale invalid contacts from invitation queue', updated)
+        logger.info('Deleted %s stale invalid contacts from invitation queue', updated)
         return updated
 
     def _has_stale_failure_history(self, contact_id: int) -> bool:
@@ -107,18 +100,18 @@ class InvitationService:
         db.session.query(Contact).filter_by(id=contact_id).update(values, synchronize_session=False)
         db.session.commit()
 
+    def _delete_contact_and_logs(self, contact_id: int) -> None:
+        """Remove irrecoverably invalid contacts and their invitation logs."""
+        InvitationLog.query.filter_by(contact_id=contact_id).delete(synchronize_session=False)
+        Contact.query.filter_by(id=contact_id).delete(synchronize_session=False)
+        db.session.commit()
+
     async def send_invitation(self, contact, template):
         """Send invitation message to a contact."""
         try:
             if self._has_stale_failure_history(contact.id):
                 logger.info('Skipping contact %s due to stale failure history', contact.telegram_id)
-                self._update_contact_status(
-                    contact.id,
-                    is_valid=False,
-                    invitation_sent=True,
-                    status='blocked',
-                    invitation_sent_at=datetime.utcnow(),
-                )
+                self._delete_contact_and_logs(contact.id)
                 return False
 
             client = await self.client_manager.get_client()
@@ -151,10 +144,7 @@ class InvitationService:
                     'Contact %s has no username/access_hash; marking as invalid for invitations',
                     contact.telegram_id,
                 )
-                contact.is_valid = False
-                contact.invitation_sent = True
-                contact.status = 'blocked'
-                db.session.commit()
+                self._delete_contact_and_logs(contact.id)
                 return False
 
             # Send message
@@ -227,13 +217,7 @@ class InvitationService:
             ]):
                 logger.warning(f'Contact {contact.id} (ID: {contact.telegram_id}) not found in Telegram - marking as invalid')
                 try:
-                    self._update_contact_status(
-                        contact.id,
-                        is_valid=False,
-                        invitation_sent=True,
-                        status='blocked',
-                        invitation_sent_at=datetime.utcnow(),
-                    )
+                    self._delete_contact_and_logs(contact.id)
                 except Exception:
                     db.session.rollback()
             
