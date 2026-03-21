@@ -261,9 +261,24 @@ class InvitationService:
             return False
 
     async def run_invitation_batch(self, limit=10):
-        """Send up to N invitations with random delays."""
+        """Send up to N invitations with random delays, respecting daily_invitation_limit."""
         try:
-            contacts = await self.get_pending_contacts(limit)
+            # Enforce daily invitation limit
+            daily_limit = int(AppConfig.get('daily_invitation_limit', '80') or '80')
+            today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+            sent_today = InvitationLog.query.filter(
+                InvitationLog.status == 'sent',
+                InvitationLog.sent_at >= today_start,
+            ).count()
+            remaining = daily_limit - sent_today
+            if remaining <= 0:
+                logger.info('Daily invitation limit reached (%d/%d). Skipping batch.', sent_today, daily_limit)
+                return 0
+            effective_limit = min(limit, remaining)
+            logger.info('Daily invitations: %d/%d sent, %d remaining. Running batch of %d.',
+                        sent_today, daily_limit, remaining, effective_limit)
+
+            contacts = await self.get_pending_contacts(effective_limit)
             if not contacts:
                 logger.info('No pending contacts for invitations')
                 return 0

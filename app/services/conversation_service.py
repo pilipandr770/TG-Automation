@@ -376,21 +376,41 @@ class ConversationService:
             logger.error(f'Error handling message: {e}', exc_info=True)
 
     async def handle_channel_comment(self, event):
-        """Handle paid comments in channel (replies via swipe left).
-        
-        When a subscriber replies to a post with a comment (paid):
-        - Create conversation record
-        - Detect if reply is to paid content
-        - Generate response with PAID_CHANNEL_REPLY or CHANNEL_COMMENT mode
-        - Reply to the comment
-        
+        """Handle comments/replies in the configured target channel only.
+
+        Only responds when:
+        - The event is from the target channel configured in AppConfig
+        - The message is a reply (reply_to_msg_id is set) — i.e. a comment on a post
+        - The sender is a real user (not the channel itself)
+
         IMPORTANT: Do NOT fallback to generic response. Use explicit modes.
         """
         try:
-            # This handles messages sent to channel comments
-            if not event.is_channel:
+            # ── Guard 1: only target channel ────────────────────────────
+            target_channel = AppConfig.get('target_channel', '').strip()
+            if not target_channel:
+                return  # No target configured — don't respond to any channel messages
+
+            try:
+                if target_channel.lstrip('-').isdigit():
+                    if str(event.chat_id) != target_channel:
+                        return
+                else:
+                    chat = await event.get_chat()
+                    chat_username = (getattr(chat, 'username', None) or '').lower()
+                    if chat_username != target_channel.lstrip('@').lower():
+                        return
+            except Exception:
+                return  # Can't confirm channel, skip to be safe
+
+            # ── Guard 2: only replies (comments), not standalone posts ──
+            if not event.reply_to_msg_id:
                 return
-            
+
+            # ── Guard 3: sender must be a real user ─────────────────────
+            if not event.sender_id or event.sender_id < 0:
+                return  # channel/anonymous post, not a user comment
+
             # For channel messages, use sender_id directly (not get_sender which returns Channel object)
             telegram_user_id = event.sender_id
             
@@ -520,33 +540,23 @@ class ConversationService:
                             logger.info(f'[CHANNEL REPLY] Final fallback succeeded')
                         except Exception as final_err:
                             logger.error(f'[CHANNEL REPLY] All send attempts failed: {final_err}', exc_info=True)
-                            raise final_err
                 else:
-                    # Not a MONOFORUM error, re-raise
-                    raise reply_err
-                
-                # Save assistant response
-                assistant_msg = ConversationMessage(
-                    conversation_id=conv.id,
-                    role='assistant',
-                    content=response_text,
-                    telegram_msg_id=sent_message.id
-                )
-                db.session.add(assistant_msg)
-                conv.total_messages += 1
-                db.session.commit()
-                
-            except Exception as e:
-                logger.error(f'[CHANNEL REPLY] Failed to send reply: {e}', exc_info=True)
-                # Still save the response attempt without message ID
-                assistant_msg = ConversationMessage(
-                    conversation_id=conv.id,
-                    role='assistant',
-                    content=response_text,
-                    telegram_msg_id=None
-                )
-                db.session.add(assistant_msg)
-                db.session.commit()
+                    logger.error(f'[CHANNEL REPLY] Failed to send reply: {reply_err}', exc_info=True)
+
+            # Always save assistant response — whether send succeeded or failed
+            assistant_msg = ConversationMessage(
+                conversation_id=conv.id,
+                role='assistant',
+                content=response_text,
+                telegram_msg_id=sent_message.id if sent_message else None
+            )
+            db.session.add(assistant_msg)
+            conv.total_messages += 1
+            db.session.commit()
+            if sent_message:
+                logger.info(f'[CHANNEL REPLY] Response saved (msg_id={sent_message.id})')
+            else:
+                logger.warning('[CHANNEL REPLY] Response saved without message_id (send failed)')
         
         except Exception as e:
             logger.error(f'[CHANNEL COMMENT] Error handling channel comment: {e}', exc_info=True)

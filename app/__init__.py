@@ -221,6 +221,33 @@ def _run_column_migrations(connection):
                 logger.warning(f'Migration skipped: {sql!r} — {e}')
 
 
+def _ensure_required_config_keys(app):
+    """Insert any config keys that must exist but may be missing in older deployments.
+
+    Only inserts if the key is absent — never overwrites values the admin may
+    have changed.  Add new keys here when they are introduced post-initial-seed.
+    """
+    must_have = {
+        'discovery_require_comments': 'true',
+        'daily_invitation_limit': '80',
+        'invitation_min_delay_seconds': '60',
+        'invitation_max_delay_seconds': '180',
+    }
+    try:
+        from app.models import AppConfig
+        inserted = []
+        for key, default in must_have.items():
+            if not AppConfig.query.filter_by(key=key).first():
+                db.session.add(AppConfig(key=key, value=default))
+                inserted.append(key)
+        if inserted:
+            db.session.commit()
+            logger.info('Inserted missing config keys: %s', inserted)
+    except Exception as e:
+        db.session.rollback()
+        logger.warning('_ensure_required_config_keys failed: %s', e)
+
+
 def create_app(config_name=None):
     app = Flask(__name__)
 
@@ -303,6 +330,7 @@ def create_app(config_name=None):
                 _run_column_migrations(connection)
 
         _bootstrap_fresh_database(app)
+        _ensure_required_config_keys(app)
 
     # CLI commands
     register_cli_commands(app)
