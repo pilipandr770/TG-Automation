@@ -62,6 +62,9 @@ def status():
 @admin_bp.route('/')
 @login_required
 def dashboard():
+    from app.models import TelegramSession
+    from datetime import timedelta
+
     stats = {
         'channels_found': DiscoveredChannel.query.count(),
         'channels_joined': DiscoveredChannel.query.filter_by(is_joined=True).count(),
@@ -77,11 +80,88 @@ def dashboard():
         'keywords_active': SearchKeyword.query.filter_by(active=True).count(),
     }
 
+    # ── Worker diagnostics ──────────────────────────────────────────────
+    now = datetime.utcnow()
+
+    # Telegram session status
+    tg_session = TelegramSession.query.filter_by(session_name='default', is_active=True).first()
+    if tg_session and tg_session.last_connected:
+        session_age_minutes = (now - tg_session.last_connected).total_seconds() / 60
+        session_status = 'ok' if session_age_minutes < 30 else ('warn' if session_age_minutes < 120 else 'error')
+        session_last = tg_session.last_connected
+    else:
+        session_age_minutes = None
+        session_status = 'error'
+        session_last = None
+
+    # Redis heartbeat (check if telethon worker is alive)
+    heartbeat_status = 'unknown'
+    heartbeat_ago = None
+    try:
+        redis_url = os.getenv('REDIS_URL')
+        if redis_url:
+            import redis as _redis
+            r = _redis.from_url(redis_url, socket_connect_timeout=2)
+            hb = r.get('telethon_worker_heartbeat')
+            if hb:
+                hb_time = datetime.fromisoformat(hb.decode())
+                heartbeat_ago = int((now - hb_time).total_seconds())
+                heartbeat_status = 'ok' if heartbeat_ago < 120 else ('warn' if heartbeat_ago < 600 else 'error')
+            else:
+                heartbeat_status = 'error'
+    except Exception:
+        heartbeat_status = 'unknown'
+
+    # Last discovery activity (any keyword used recently?)
+    last_kw = SearchKeyword.query.filter(SearchKeyword.last_used.isnot(None)).order_by(
+        SearchKeyword.last_used.desc()
+    ).first()
+    discovery_last = last_kw.last_used if last_kw else None
+    if discovery_last:
+        disc_age_min = int((now - discovery_last).total_seconds() / 60)
+        discovery_status = 'ok' if disc_age_min < 60 else ('warn' if disc_age_min < 180 else 'error')
+    else:
+        disc_age_min = None
+        discovery_status = 'error'
+
+    # Last audience scan
+    last_channel_scan = DiscoveredChannel.query.filter(
+        DiscoveredChannel.last_scanned_at.isnot(None)
+    ).order_by(DiscoveredChannel.last_scanned_at.desc()).first()
+    audience_last = last_channel_scan.last_scanned_at if last_channel_scan else None
+    if audience_last:
+        aud_age_min = int((now - audience_last).total_seconds() / 60)
+        audience_status = 'ok' if aud_age_min < 60 else ('warn' if aud_age_min < 180 else 'error')
+    else:
+        aud_age_min = None
+        audience_status = 'error'
+
+    worker_diagnostics = {
+        'session_status': session_status,
+        'session_last': session_last,
+        'session_age_minutes': int(session_age_minutes) if session_age_minutes is not None else None,
+        'heartbeat_status': heartbeat_status,
+        'heartbeat_ago': heartbeat_ago,
+        'discovery_status': discovery_status,
+        'discovery_last': discovery_last,
+        'disc_age_min': disc_age_min,
+        'audience_status': audience_status,
+        'audience_last': audience_last,
+        'aud_age_min': aud_age_min,
+        'channels_joined': stats['channels_joined'],
+        'keywords_total': SearchKeyword.query.count(),
+        'keywords_active': stats['keywords_active'],
+        'active_criteria': AppConfig.get('audience_analysis_cap_per_channel', '30'),
+        'templates_active': InvitationTemplate.query.filter_by(active=True).count(),
+    }
+    # ────────────────────────────────────────────────────────────────────
+
     recent_logs = TaskLog.query.order_by(TaskLog.started_at.desc()).limit(10).all()
     recent_contacts = Contact.query.order_by(Contact.created_at.desc()).limit(5).all()
 
     return render_template('admin/dashboard.html', stats=stats,
-                           recent_logs=recent_logs, recent_contacts=recent_contacts)
+                           recent_logs=recent_logs, recent_contacts=recent_contacts,
+                           worker_diagnostics=worker_diagnostics)
 
 
 # ─── Module 1: Keywords ───────────────────────────────────────────────────────
@@ -929,6 +1009,10 @@ def settings():
         if min_subscribers:
             AppConfig.set('discovery_min_subscribers', min_subscribers, 'Min subscribers for discovery filter')
 
+        # Checkbox: present in form = True, absent = False
+        require_comments = 'true' if request.form.get('discovery_require_comments') else 'false'
+        AppConfig.set('discovery_require_comments', require_comments, 'Require discussion groups only for discovery')
+
         flash('Settings saved.', 'success')
         return redirect(url_for('admin.settings'))
 
@@ -944,6 +1028,7 @@ def settings():
         'min_subscribers_filter': '100',
         'publish_interval_hours': '4',
         'max_posts_per_day': '3',
+        'discovery_require_comments': 'true',
     }
     for key, default in defaults.items():
         settings[key] = AppConfig.get(key, default)

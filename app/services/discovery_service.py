@@ -47,14 +47,18 @@ class DiscoveryService:
             return 50
 
     def _get_require_comments(self) -> bool:
-        """Comments are REQUIRED - we only work with channels/groups where users discuss.
-        
-        This means:
-        - Regular Chat/Group (types.Chat) - always OK
-        - Channel with megagroup=True - OK (has linked discussion group)
-        - Channel with gigagroup=True - OK (massive group with auto-discussion)
-        - Broadcast Channel without discussions - NOT OK
+        """Comments are required by default — we need channels/groups where users write.
+
+        Can be overridden via AppConfig key ``discovery_require_comments``.
+        Accepted falsy values: "false", "0", "no", "off".
         """
+        try:
+            from app.models import AppConfig
+            value = AppConfig.get('discovery_require_comments')
+            if value is not None:
+                return str(value).strip().lower() not in ('false', '0', 'no', 'off')
+        except Exception:
+            pass
         return True
 
     def _get_topic_prompt(self) -> str:

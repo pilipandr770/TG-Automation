@@ -134,6 +134,120 @@
     </div>
 </div>
 
+<!-- Worker Pipeline Status -->
+{% if worker_diagnostics %}
+<div class="card bg-dark border-secondary mb-4">
+    <div class="card-header border-secondary d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-cpu me-2"></i>Worker Pipeline Status</h6>
+        <small class="text-muted">Diagnostics refreshed on page load</small>
+    </div>
+    <div class="card-body">
+        <div class="row g-3">
+
+            {# Telegram Session #}
+            {% set s_color = 'success' if worker_diagnostics.session_status == 'ok' else ('warning' if worker_diagnostics.session_status == 'warn' else 'danger') %}
+            <div class="col-md-3">
+                <div class="border border-{{ s_color }} rounded p-3 h-100">
+                    <div class="d-flex align-items-center mb-1">
+                        <i class="bi bi-shield-lock me-2 text-{{ s_color }}"></i>
+                        <strong class="text-{{ s_color }}">Telegram Session</strong>
+                    </div>
+                    {% if worker_diagnostics.session_last %}
+                        <small class="text-muted">Last connected {{ worker_diagnostics.session_age_minutes }} min ago</small>
+                    {% else %}
+                        <small class="text-danger">No active session in DB — check TELEGRAM_SESSION_STRING</small>
+                    {% endif %}
+                </div>
+            </div>
+
+            {# Redis Heartbeat #}
+            {% set h_color = 'success' if worker_diagnostics.heartbeat_status == 'ok' else ('warning' if worker_diagnostics.heartbeat_status == 'warn' else ('secondary' if worker_diagnostics.heartbeat_status == 'unknown' else 'danger')) %}
+            <div class="col-md-3">
+                <div class="border border-{{ h_color }} rounded p-3 h-100">
+                    <div class="d-flex align-items-center mb-1">
+                        <i class="bi bi-activity me-2 text-{{ h_color }}"></i>
+                        <strong class="text-{{ h_color }}">Telethon Worker</strong>
+                    </div>
+                    {% if worker_diagnostics.heartbeat_status == 'ok' %}
+                        <small class="text-muted">Heartbeat {{ worker_diagnostics.heartbeat_ago }} s ago — running ✓</small>
+                    {% elif worker_diagnostics.heartbeat_status == 'warn' %}
+                        <small class="text-warning">Last heartbeat {{ worker_diagnostics.heartbeat_ago }} s ago — may be slow</small>
+                    {% elif worker_diagnostics.heartbeat_status == 'unknown' %}
+                        <small class="text-muted">Redis unavailable — cannot check worker</small>
+                    {% else %}
+                        <small class="text-danger">No heartbeat — worker NOT running or crashed!</small>
+                    {% endif %}
+                </div>
+            </div>
+
+            {# Discovery #}
+            {% set d_color = 'success' if worker_diagnostics.discovery_status == 'ok' else ('warning' if worker_diagnostics.discovery_status == 'warn' else 'danger') %}
+            <div class="col-md-3">
+                <div class="border border-{{ d_color }} rounded p-3 h-100">
+                    <div class="d-flex align-items-center mb-1">
+                        <i class="bi bi-search me-2 text-{{ d_color }}"></i>
+                        <strong class="text-{{ d_color }}">Discovery</strong>
+                    </div>
+                    {% if worker_diagnostics.discovery_last %}
+                        <small class="text-muted">Last keyword {{ worker_diagnostics.disc_age_min }} min ago</small><br>
+                        <small class="text-muted">Joined channels: {{ worker_diagnostics.channels_joined }}</small>
+                    {% else %}
+                        <small class="text-danger">Never ran — keywords: {{ worker_diagnostics.keywords_active }}/{{ worker_diagnostics.keywords_total }}</small>
+                    {% endif %}
+                </div>
+            </div>
+
+            {# Audience #}
+            {% set a_color = 'success' if worker_diagnostics.audience_status == 'ok' else ('warning' if worker_diagnostics.audience_status == 'warn' else 'danger') %}
+            <div class="col-md-3">
+                <div class="border border-{{ a_color }} rounded p-3 h-100">
+                    <div class="d-flex align-items-center mb-1">
+                        <i class="bi bi-people me-2 text-{{ a_color }}"></i>
+                        <strong class="text-{{ a_color }}">Audience Scan</strong>
+                    </div>
+                    {% if worker_diagnostics.audience_last %}
+                        <small class="text-muted">Last scan {{ worker_diagnostics.aud_age_min }} min ago</small><br>
+                        <small class="text-muted">Templates active: {{ worker_diagnostics.templates_active }}</small>
+                    {% else %}
+                        {% if worker_diagnostics.channels_joined == 0 %}
+                            <small class="text-danger">No joined channels → nothing to scan</small>
+                        {% else %}
+                            <small class="text-danger">Never ran — {{ worker_diagnostics.channels_joined }} channels joined but not yet scanned</small>
+                        {% endif %}
+                    {% endif %}
+                </div>
+            </div>
+
+        </div>
+
+        {# Action hints when there are errors #}
+        {% set has_error = worker_diagnostics.session_status == 'error' or worker_diagnostics.heartbeat_status == 'error' or worker_diagnostics.discovery_status == 'error' %}
+        {% if has_error %}
+        <div class="alert alert-warning border-warning mt-3 mb-0">
+            <i class="bi bi-exclamation-triangle me-2"></i>
+            <strong>Диагностика:</strong>
+            <ul class="mb-0 mt-1">
+                {% if worker_diagnostics.session_status == 'error' %}
+                <li>Сессия Telegram не найдена в БД. Проверьте <code>TELEGRAM_SESSION_STRING</code> в .env или войдите через <a href="{{ url_for('admin.telegram_session') }}" class="alert-link">Telegram Session</a>.</li>
+                {% endif %}
+                {% if worker_diagnostics.heartbeat_status == 'error' %}
+                <li>Telethon-воркер не отвечает. На VPS выполните: <code>docker-compose logs --tail=50 telethon</code> или <code>docker-compose restart telethon</code>.</li>
+                {% endif %}
+                {% if worker_diagnostics.discovery_status == 'error' and worker_diagnostics.keywords_active == 0 %}
+                <li>Нет активных ключевых слов. Перейдите в <a href="{{ url_for('admin.keywords') }}" class="alert-link">Keywords</a> и убедитесь, что слова активны.</li>
+                {% elif worker_diagnostics.discovery_status == 'error' %}
+                <li>Discovery не запускался. Если воркер работает, ждите следующего цикла (до 30 мин).</li>
+                {% endif %}
+                {% if worker_diagnostics.audience_status == 'error' and worker_diagnostics.channels_joined == 0 %}
+                <li>Нет присоединённых каналов → Audience Scan пропускается. Дождитесь, пока Discovery найдёт каналы, или добавьте вручную в <a href="{{ url_for('admin.channels') }}" class="alert-link">Channels</a>.</li>
+                {% endif %}
+            </ul>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
 <!-- Recent Activity -->
 <div class="row g-3">
     <!-- Recent Contacts -->

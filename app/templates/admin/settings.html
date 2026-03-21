@@ -45,6 +45,17 @@
                     <input type="number" name="min_subscribers_filter" value="{{ settings.min_subscribers_filter }}"
                            class="form-control bg-dark text-light border-secondary" min="0">
                 </div>
+                <div class="col-md-4 d-flex align-items-end">
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" name="discovery_require_comments"
+                               id="requireCommentsSwitch"
+                               {% if settings.get('discovery_require_comments', 'true') not in ('false', '0', 'no', 'off') %}checked{% endif %}>
+                        <label class="form-check-label text-light" for="requireCommentsSwitch">
+                            Require discussion (groups only)
+                        </label>
+                        <div class="form-text">Включено = вступаем только в группы/супергруппы с чатом. Выключите, если нужно вступать в broadcast-каналы.</div>
+                    </div>
+                </div>
 
                 <div class="col-12 mt-4">
                     <h6 class="text-muted">Module 2: Audience Scanning</h6>

@@ -98,61 +98,58 @@ async def main():
         # Initialize Telegram client
         logger.info('🔐 Initializing Telegram client...')
         client_mgr = get_telegram_client_manager()
-        client_mgr.load_session_from_db()
-        client = await client_mgr.get_client()
 
-        if not client:
-            logger.error('❌ Failed to create Telegram client. Check credentials.')
+        async def _try_connect_and_authorize(session_source: str) -> bool:
+            """Attempt to connect and verify authorization. Returns True on success."""
+            try:
+                client = await client_mgr.get_client()
+                if not client:
+                    return False
+                if not client.is_connected():
+                    await client.connect()
+                authorized = await client.is_user_authorized()
+                if authorized:
+                    logger.info('✅ Telegram client authorized via %s session.', session_source)
+                    client_mgr.save_session_to_db()
+                    return True
+                logger.warning('⚠️  Session from %s loaded but not authorized.', session_source)
+                return False
+            except Exception as e:
+                logger.warning('⚠️  Connection attempt with %s session failed: %s', session_source, str(e)[:120])
+                return False
+
+        # ── Strategy 1: Try .env session first (always the intended configuration) ──
+        authorized = False
+        env_session = os.getenv('TELEGRAM_SESSION_STRING', '').strip()
+        if env_session:
+            logger.info('🔑 Trying .env TELEGRAM_SESSION_STRING ...')
+            client_mgr._instance = None  # reset singleton so a fresh client is built
+            client_mgr._session_string = env_session
+            client_mgr.client = None
+            authorized = await _try_connect_and_authorize('.env')
+
+        # ── Strategy 2: Fall back to DB session if env didn't work ──
+        if not authorized:
+            logger.info('🔑 Trying session from database ...')
+            # Reset client so a new one is created with the DB session
+            client_mgr._session_string = None
+            client_mgr.client = None
+            loaded = client_mgr.load_session_from_db()
+            if loaded:
+                authorized = await _try_connect_and_authorize('database')
+
+        if not authorized:
+            logger.error('❌ Telegram client not authorized!')
+            logger.error('Please set a valid TELEGRAM_SESSION_STRING in your .env / environment variables.')
+            logger.error('Run locally with: python scripts/telegram_auth_session.py  (or python telethon_runner.py)')
+            if os.getenv('FLASK_ENV') == 'production':
+                logger.warning('⏳ No valid Telegram session — waiting 60 s before exit to allow log collection.')
+                await asyncio.sleep(60)
             return
 
-        try:
-            await client.connect()
-            if not await client.is_user_authorized():
-                logger.error('❌ Telegram client not authorized!')
-                logger.error('To authenticate, run locally: python telethon_runner.py')
-                logger.error('Or set TELEGRAM_SESSION_STRING in .env')
-                
-                # Check if we're in production (Render)
-                if os.getenv('FLASK_ENV') == 'production':
-                    logger.warning('⏳ Running on production. Waiting 30 seconds for manual setup...')
-                    await asyncio.sleep(30)
-                    logger.error('❌ Giving up: No valid Telegram session. Please authenticate locally first.')
-                    return
-                
-                # Interactive authentication (only for local development)
-                logger.info('Starting interactive authentication for local development...')
-                phone = input('Enter your phone number (with country code, e.g., +1234567890): ').strip()
-                
-                await client.sign_in(phone)
-                logger.info('SMS code sent to your phone. Check Telegram.')
-                
-                code = input('Enter the SMS code: ').strip()
-                
-                try:
-                    await client.sign_in(code=code)
-                except Exception as e:
-                    if '2FA' in str(e) or 'Two-steps' in str(e):
-                        logger.info('Two-factor authentication detected. Enter your 2FA password.')
-                        password = input('Enter your Telegram password: ').strip()
-                        try:
-                            await client.sign_in(password=password)
-                            logger.info('Successfully authenticated with 2FA!')
-                        except Exception as e2:
-                            logger.error(f'Failed to sign in with 2FA password: {e2}')
-                            return
-                    else:
-                        logger.error(f'Failed to sign in with code: {e}')
-                        return
-                
-                logger.info('Successfully authenticated!')
-                client_mgr.save_session_to_db()
-            else:
-                logger.info('Telegram client already authorized.')
-                # Save session after successful connection
-                client_mgr.save_session_to_db()
-
-        except Exception as e:
-            logger.error(f'Telegram connection error: {e}')
+        client = await client_mgr.get_client()
+        if not client:
+            logger.error('❌ Could not obtain Telegram client after authorization check.')
             return
 
         # Initialize services

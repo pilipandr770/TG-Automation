@@ -42,6 +42,7 @@ def _seed_fresh_database_defaults(app):
         'discovery_interval_seconds': '1800',
         'min_subscribers_filter': '150',
         'discovery_min_subscribers': '150',
+        'discovery_require_comments': 'true',
         'audience_scan_interval_minutes': '30',
         'audience_scan_interval': '1800',
         'audience_message_limit': '150',
