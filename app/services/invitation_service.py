@@ -263,6 +263,12 @@ class InvitationService:
     async def run_invitation_batch(self, limit=10):
         """Send up to N invitations with random delays, respecting daily_invitation_limit."""
         try:
+            # Verify client is connected before starting
+            client = await self.client_manager.get_client()
+            if not client or not await client.is_connected():
+                logger.error('[INVITATIONS] Client not connected, skipping batch')
+                return 0
+
             # Enforce daily invitation limit
             daily_limit = int(AppConfig.get('daily_invitation_limit', '80') or '80')
             today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -284,8 +290,8 @@ class InvitationService:
                 return 0
 
             sent_count = 0
-            min_delay = int(AppConfig.get('invitation_min_delay_seconds', '60') or '60')
-            max_delay = int(AppConfig.get('invitation_max_delay_seconds', '180') or '180')
+            min_delay = int(AppConfig.get('invitation_min_delay_seconds', '5') or '5')
+            max_delay = int(AppConfig.get('invitation_max_delay_seconds', '15') or '15')
 
             for contact in contacts:
                 try:

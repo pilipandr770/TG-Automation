@@ -581,6 +581,7 @@ class AudienceService:
                         username=msg_data.get('username'),
                         first_name=msg_data.get('first_name'),
                         last_name=msg_data.get('last_name'),
+                        is_valid=True,
                         confidence_score=evaluation.get('confidence', 0.0),
                         analysis_summary=evaluation.get('reason', '')[:500],
                         source_channel_id=channel.id,
