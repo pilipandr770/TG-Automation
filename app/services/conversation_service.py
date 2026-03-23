@@ -140,40 +140,32 @@ class ConversationService:
 
             logger.info(f'[OPENAI] Sending {len(messages)} messages to OpenAI (including new user message)')
 
-            # ── All DB work in asyncio coroutine; only HTTP in executor ──
-
-            # Step 1: Budget check
+            # Step 1: Budget check (sync DB call — fast)
             logger.info('[OPENAI] Step 1/4: checking budget...')
             if not self.openai_service._check_budget():
                 logger.warning('[OPENAI] Daily budget exceeded, cannot respond')
                 return "I'm sorry, I couldn't process that right now. Please try again."
+            logger.info('[OPENAI] Step 1/4 done')
 
-            # Step 2: Model name
+            # Step 2: Model name (sync DB call — fast)
             logger.info('[OPENAI] Step 2/4: getting model name...')
             model_name = self.openai_service._get_model()
             logger.info(f'[OPENAI] Step 2/4 done: model={model_name}')
 
-            # Step 3: OpenAI client (resolves API key)
-            logger.info('[OPENAI] Step 3/4: getting OpenAI client...')
-            openai_client = self.openai_service.client
-            logger.info('[OPENAI] Step 3/4 done: client ready')
+            # Step 3: Async OpenAI client (no executor — properly cancellable)
+            logger.info('[OPENAI] Step 3/4: getting async OpenAI client...')
+            async_client = self.openai_service.async_client
+            logger.info('[OPENAI] Step 3/4 done: async client ready')
 
-            # Step 4: HTTP call in thread
-            logger.info('[OPENAI] Step 4/4: sending HTTP request to OpenAI...')
-            # Build full message list
+            # Step 4: Native async HTTP call — properly awaitable and cancellable
+            logger.info('[OPENAI] Step 4/4: sending async HTTP request to OpenAI...')
             full_messages = [{'role': 'system', 'content': system_prompt}] + messages
-
-            # 5) Run ONLY the blocking HTTP call in a thread — zero DB inside
-            loop = asyncio.get_running_loop()
             logger.info(f'[OPENAI] Calling API with model={model_name}...')
             try:
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: openai_client.chat.completions.create(
-                        model=model_name,
-                        messages=full_messages,
-                        temperature=0.7,
-                    )
+                response = await async_client.chat.completions.create(
+                    model=model_name,
+                    messages=full_messages,
+                    temperature=0.7,
                 )
             except Exception as api_err:
                 logger.error(f'[OPENAI] API call failed: {api_err}', exc_info=True)
@@ -241,18 +233,14 @@ class ConversationService:
                 return None
 
             model_name = self.openai_service._get_model()
-            openai_client = self.openai_service.client
+            async_client = self.openai_service.async_client
             full_messages = [{'role': 'system', 'content': system_prompt}] + messages
 
-            loop = asyncio.get_running_loop()
             try:
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: openai_client.chat.completions.create(
-                        model=model_name,
-                        messages=full_messages,
-                        temperature=0.7,
-                    )
+                response = await async_client.chat.completions.create(
+                    model=model_name,
+                    messages=full_messages,
+                    temperature=0.7,
                 )
             except Exception as api_err:
                 logger.error(f'[CHANNEL RESPONSE] API call failed: {api_err}', exc_info=True)
@@ -425,14 +413,12 @@ class ConversationService:
             async with event.client.action(conv.telegram_user_id, 'typing'):
                 await asyncio.sleep(delay_seconds)
                 logger.info(f'⏰ [DELAY] Delay complete, now generating response...')
-                # Generate AI response — hard timeout: if it hangs, fail fast
+                # Generate AI response — asyncio.timeout() hard deadline (Python 3.11 native)
                 try:
-                    response_text = await asyncio.wait_for(
-                        self.generate_response(conv, user_message_text),
-                        timeout=40.0
-                    )
-                except asyncio.TimeoutError:
-                    logger.error(f'[DM REPLY] generate_response TIMED OUT after 40s for {telegram_user_id}')
+                    async with asyncio.timeout(35.0):
+                        response_text = await self.generate_response(conv, user_message_text)
+                except (asyncio.TimeoutError, TimeoutError):
+                    logger.error(f'[DM REPLY] generate_response TIMED OUT after 35s for {telegram_user_id}')
                     response_text = 'Вибачте, щось пішло не так. Спробуйте надіслати повідомлення ще раз.'
 
                 # Telegram hard limit — truncate to avoid MessageTooLongError

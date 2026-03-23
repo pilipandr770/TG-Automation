@@ -9,7 +9,7 @@ import asyncio
 from datetime import datetime, timedelta
 from flask import has_app_context
 
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,7 @@ class OpenAIService:
     def __init__(self):
         self._api_key: str = os.getenv('OPENAI_API_KEY', '')
         self._client: OpenAI | None = None
+        self._async_client: AsyncOpenAI | None = None
         self._app = None  # Flask app reference — set by telethon_runner for thread-safe context
 
     def _resolve_api_key(self) -> str:
@@ -73,6 +74,25 @@ class OpenAIService:
             )
             logger.info('Initialized OpenAI client with timeout=%ss max_retries=%s', timeout, max_retries)
         return self._client
+
+    @property
+    def async_client(self) -> AsyncOpenAI:
+        """Async OpenAI client — used by asyncio coroutines for proper cancellability."""
+        resolved_key = self._resolve_api_key()
+        if not resolved_key:
+            raise RuntimeError('OPENAI_API_KEY is not set')
+        if self._async_client is None:
+            timeout = self._run_with_app_context(
+                self._get_request_timeout,
+                fallback=DEFAULT_TIMEOUT_SECONDS,
+            )
+            self._async_client = AsyncOpenAI(
+                api_key=resolved_key,
+                timeout=timeout,
+                max_retries=0,
+            )
+            logger.info('Initialized AsyncOpenAI client with timeout=%ss', timeout)
+        return self._async_client
 
     # ── config helpers (need Flask app context) ──────────────────────────
 

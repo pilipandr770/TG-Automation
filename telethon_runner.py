@@ -76,6 +76,7 @@ async def listen_redis_commands(app, redis_client, discovery, audience, invitati
 async def main():
     logger.info('=' * 70)
     logger.info('TELETHON_RUNNER: Starting main() function')
+    logger.info('CODE VERSION: async-openai-client-v6 (2026-03-23)')
     logger.info('=' * 70)
     
     # Import Flask app and services
