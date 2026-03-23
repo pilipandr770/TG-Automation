@@ -76,7 +76,7 @@ async def listen_redis_commands(app, redis_client, discovery, audience, invitati
 async def main():
     logger.info('=' * 70)
     logger.info('TELETHON_RUNNER: Starting main() function')
-    logger.info('CODE VERSION: async-openai-client-v6 (2026-03-23)')
+    logger.info('CODE VERSION: async-openai-client-v7 (2026-03-23)')
     logger.info('=' * 70)
     
     # Import Flask app and services
@@ -254,18 +254,44 @@ async def main():
 
         logger.info(f'Started {len(tasks)} background tasks. Running...')
 
+        # Log bot identity so we know which account to send test messages to
+        try:
+            me = await client.get_me()
+            if me:
+                name = f'{me.first_name or ""} {me.last_name or ""}'.strip()
+                logger.info(f'🤖 Running as: @{me.username} | {name} | id={me.id}')
+                logger.info(f'   ⚡ Send test messages to THIS Telegram account: @{me.username or me.id}')
+        except Exception as _me_err:
+            logger.warning(f'Could not fetch bot identity: {_me_err}')
+
         # Start Telethon client event loop to listen for incoming messages
         # CRITICAL: client.run_until_disconnected() must run to process updates
         logger.info('🎯 Starting Telethon event listener for incoming message handling...')
-        
+
         async def client_event_loop():
-            """Wrapper to ensure client properly listens for updates."""
-            try:
-                logger.info('💬 Telethon event listener started - waiting for messages...')
-                await client.run_until_disconnected()
-            except Exception as e:
-                logger.error(f'❌ Telethon event loop error: {e}', exc_info=True)
-        
+            """Keep Telethon connected and processing updates. Auto-reconnects on disconnect."""
+            consecutive_failures = 0
+            while True:
+                try:
+                    if not client.is_connected():
+                        logger.info('💬 [EVENT LOOP] Reconnecting Telethon client...')
+                        await client.connect()
+                        logger.info('💬 [EVENT LOOP] Reconnected successfully.')
+                    logger.info('💬 [EVENT LOOP] Waiting for messages (run_until_disconnected)...')
+                    await client.run_until_disconnected()
+                    # run_until_disconnected() returned normally — client disconnected
+                    logger.warning('💬 [EVENT LOOP] Client disconnected (normal return). Reconnecting in 5s...')
+                    consecutive_failures = 0
+                except asyncio.CancelledError:
+                    logger.info('💬 [EVENT LOOP] Cancelled — shutting down.')
+                    break
+                except Exception as e:
+                    consecutive_failures += 1
+                    wait = min(5 * consecutive_failures, 60)
+                    logger.error(f'❌ [EVENT LOOP] Error (#{consecutive_failures}): {e}', exc_info=True)
+                    logger.info(f'💬 [EVENT LOOP] Retrying in {wait}s...')
+                await asyncio.sleep(5)
+
         client_task = asyncio.create_task(client_event_loop())
         tasks.append(client_task)
 
@@ -292,6 +318,12 @@ async def main():
                             if exc:
                                 logger.error(f'❌ Task failed: {exc}')
                                 logger.warning(f'🔄 A background task failed. Continuing...')
+                            else:
+                                # Task completed normally — this is unexpected for infinite tasks
+                                if task is client_task:
+                                    logger.error('❌ [MONITOR] client_event_loop exited unexpectedly! Event handling stopped.')
+                                else:
+                                    logger.warning(f'⚠️  [MONITOR] A background task completed unexpectedly (no exception).')
                         except asyncio.CancelledError:
                             pass
                 
