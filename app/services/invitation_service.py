@@ -265,7 +265,7 @@ class InvitationService:
         try:
             # Verify client is connected before starting
             client = await self.client_manager.get_client()
-            if not client or not await client.is_connected():
+            if not client or not client.is_connected():
                 logger.error('[INVITATIONS] Client not connected, skipping batch')
                 return 0
 
