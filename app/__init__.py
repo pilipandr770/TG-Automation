@@ -68,21 +68,21 @@ def _seed_fresh_database_defaults(app):
         ('trading chat', 'en', 65),
         ('crypto signals', 'en', 60),
         ('altcoins', 'en', 55),
-        ('крипта', 'ru', 100),
-        ('криптовалюта', 'ru', 95),
-        ('блокчейн', 'ru', 90),
-        ('трейдинг', 'ru', 85),
-        ('дефи', 'ru', 80),
-        ('эйрдроп', 'ru', 75),
-        ('тон', 'ru', 70),
-        ('мемкоин', 'ru', 65),
-        ('крипто чат', 'ru', 60),
-        ('web3 чат', 'ru', 55),
+        ('крипта', 'uk', 100),
+        ('криптовалюта', 'uk', 95),
+        ('блокчейн', 'uk', 90),
+        ('трейдинг', 'uk', 85),
+        ('дефі', 'uk', 80),
+        ('ейрдроп', 'uk', 75),
+        ('тон', 'uk', 70),
+        ('мемкоін', 'uk', 65),
+        ('крипто чат', 'uk', 60),
+        ('web3 чат', 'uk', 55),
     ]
 
     criteria = AudienceCriteria(
         name='Crypto Community Members',
-        keywords='crypto,web3,blockchain,trading,defi,airdrop,ton,крипта,трейдинг',
+        keywords='crypto,web3,blockchain,trading,defi,airdrop,ton,крипта,трейдинг,криптовалюта,дефі',
         openai_prompt=(
             'Analyze the Telegram user message and profile in the context of crypto and web3 communities. '
             'Return strict JSON with keys category, confidence, summary. '
@@ -94,13 +94,13 @@ def _seed_fresh_database_defaults(app):
     )
 
     template = InvitationTemplate(
-        name='Crypto Invite RU',
+        name='Crypto Invite UA',
         body=(
-            'Привет, {first_name}! Видел твою активность в {channel}. '
-            'У нас собирается Telegram-канал про крипту, web3 и рабочие идеи по рынку. '
-            'Если интересно, загляни: {channel}'
+            'Привіт, {first_name}! Бачив твою активність у {channel}. '
+            'У нас збирається Telegram-канал про крипту, web3 та робочі ідеї по ринку. '
+            'Якщо цікаво, зазирни: {channel}'
         ),
-        language='ru',
+        language='uk',
         active=True,
     )
 
@@ -125,7 +125,7 @@ def _seed_fresh_database_defaults(app):
             name='Bits Media',
             url='https://bits.media/rss/',
             source_type='rss',
-            language='ru',
+            language='uk',
             active=True,
             fetch_interval_hours=6,
         ),

@@ -109,6 +109,12 @@ class ConversationService:
     async def generate_response(self, conversation, user_message):
         """Generate AI response using OpenAI with full conversation context (PRIVATE_DIALOG mode)."""
         try:
+            # Recover from any stale/error DB transaction left by a concurrent coordinator step
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+
             # Get conversation history
             history = self.get_conversation_history(conversation.id, limit=20)
 
@@ -350,27 +356,41 @@ class ConversationService:
             )
 
             # Show typing indicator during delay + generation so user sees activity immediately
+            logger.info(f'[DM REPLY] Starting typing + response flow for {telegram_user_id}')
             async with event.client.action(conv.telegram_user_id, 'typing'):
                 await asyncio.sleep(delay_seconds)
                 logger.info(f'⏰ [DELAY] Delay complete, now generating response...')
                 # Generate AI response
                 response_text = await self.generate_response(conv, user_message_text)
 
-                # Send response
-                sent_message = await event.reply(response_text)
+                # Telegram hard limit — truncate to avoid MessageTooLongError
+                MAX_TG_LEN = 4096
+                if response_text and len(response_text) > MAX_TG_LEN:
+                    logger.warning(f'[DM REPLY] Response truncated {len(response_text)} → {MAX_TG_LEN} chars')
+                    response_text = response_text[:MAX_TG_LEN - 3] + '...'
 
-                # Save assistant message
-                assistant_msg = ConversationMessage(
-                    conversation_id=conv.id,
-                    role='assistant',
-                    content=response_text,
-                    telegram_msg_id=sent_message.id
-                )
-                db.session.add(assistant_msg)
-                conv.total_messages += 1
-                db.session.commit()
+                # Send response — isolated so DB errors don't block the reply
+                sent_message = None
+                logger.info(f'[DM REPLY] Sending reply to {telegram_user_id} ({len(response_text)} chars)...')
+                try:
+                    sent_message = await event.reply(response_text)
+                    logger.info(f'✅ Sent response to {telegram_user_id} (msg_id={sent_message.id})')
+                except Exception as reply_err:
+                    logger.error(f'[DM REPLY] Failed to send reply to {telegram_user_id}: {reply_err}', exc_info=True)
 
-                logger.info(f'✅ Sent response to {telegram_user_id}')
+                # Save assistant message regardless of send result
+                try:
+                    assistant_msg = ConversationMessage(
+                        conversation_id=conv.id,
+                        role='assistant',
+                        content=response_text,
+                        telegram_msg_id=sent_message.id if sent_message else None
+                    )
+                    db.session.add(assistant_msg)
+                    conv.total_messages += 1
+                    db.session.commit()
+                except Exception as db_err:
+                    logger.error(f'[DM REPLY] DB save failed for {telegram_user_id}: {db_err}')
 
         except Exception as e:
             logger.error(f'Error handling message: {e}', exc_info=True)
@@ -481,12 +501,14 @@ class ConversationService:
             paid_instructions = paid_content.instructions if paid_content else None
             channel_instructions = AppConfig.get('openai_prompt_channel_comments')
             
+            logger.info(f'[CHANNEL COMMENT] Calling OpenAI for response (paid={paid_content is not None}, has_channel_instructions={bool(channel_instructions)})...')
             response_text = await self.generate_response_for_channel(
                 conv,
                 user_message_text,
                 paid_instructions=paid_instructions,
                 channel_instructions=channel_instructions
             )
+            logger.info(f'[CHANNEL COMMENT] OpenAI call returned: {repr(response_text[:80]) if response_text else None}')
             
             # FORBID fallback - if response_text is None, abort
             if not response_text:

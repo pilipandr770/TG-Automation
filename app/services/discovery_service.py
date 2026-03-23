@@ -769,7 +769,7 @@ Target niche: {business_goal}
 Requirements:
 - Each keyword should be 1-4 words
 - Use DIFFERENT angles and approaches (not just synonyms)
-- Include both English AND Russian variants
+- Include both English AND Ukrainian variants
 - Focus on finding discussion groups, not just broadcast channels
 - Try different phrasings: topic + "chat", "group", "community", "discussion"
 
