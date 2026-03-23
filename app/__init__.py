@@ -198,7 +198,14 @@ def _bootstrap_fresh_database(app):
 
 
 def _run_column_migrations(connection):
-    """Apply incremental ADD COLUMN migrations safely (idempotent)."""
+    """Apply incremental ADD COLUMN migrations safely (idempotent).
+
+    Each statement is executed and committed individually so that a lock
+    conflict on one table never deadlocks an unrelated ALTER TABLE.
+    ``connection`` is accepted for API compatibility but is not used —
+    each migration opens its own autocommit connection instead.
+    """
+    from sqlalchemy import create_engine
     migrations = [
         # contacts.access_hash — needed to send DMs after entity cache is cleared
         "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS access_hash BIGINT",
@@ -212,11 +219,14 @@ def _run_column_migrations(connection):
         "ALTER TABLE discovered_channels ADD COLUMN IF NOT EXISTS join_fail_count INTEGER DEFAULT 0",
         "ALTER TABLE discovered_channels ADD COLUMN IF NOT EXISTS retry_reason VARCHAR(255)",
     ]
+    # Run each ALTER TABLE in its own isolated transaction so lock contention
+    # on one table cannot deadlock unrelated concurrent queries.
     for sql in migrations:
         try:
-            connection.execute(text(sql))
+            with db.engine.begin() as conn:
+                conn.execute(text(sql))
         except Exception as e:
-            # Fallback for DBs that don't support IF NOT EXISTS (e.g. older SQLite)
+            # Ignore duplicate-column errors (column already exists)
             if 'duplicate column' not in str(e).lower() and 'already exists' not in str(e).lower():
                 logger.warning(f'Migration skipped: {sql!r} — {e}')
 
@@ -320,14 +330,15 @@ def create_app(config_name=None):
                 connection.execute(text('SELECT pg_advisory_lock(:lock_id)'), {'lock_id': lock_id})
                 try:
                     db.metadata.create_all(bind=connection)
-                    # Incremental column migrations (safe – no-op if column already exists)
-                    _run_column_migrations(connection)
                 finally:
                     connection.execute(text('SELECT pg_advisory_unlock(:lock_id)'), {'lock_id': lock_id})
+            # Run column migrations OUTSIDE the advisory-locked transaction so
+            # each ALTER TABLE owns its own short transaction and cannot
+            # deadlock with concurrent queries from the Telethon worker.
+            _run_column_migrations(None)
         else:
             db.create_all()
-            with db.engine.begin() as connection:
-                _run_column_migrations(connection)
+            _run_column_migrations(None)
 
         _bootstrap_fresh_database(app)
         _ensure_required_config_keys(app)
