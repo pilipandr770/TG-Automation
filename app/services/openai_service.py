@@ -31,6 +31,7 @@ class OpenAIService:
     def __init__(self):
         self._api_key: str = os.getenv('OPENAI_API_KEY', '')
         self._client: OpenAI | None = None
+        self._app = None  # Flask app reference — set by telethon_runner for thread-safe context
 
     def _resolve_api_key(self) -> str:
         try:
@@ -80,9 +81,18 @@ class OpenAIService:
         if has_app_context():
             return func()
 
+        # Use the pre-initialized app reference if available (avoids re-running create_app())
+        if self._app is not None:
+            try:
+                with self._app.app_context():
+                    return func()
+            except Exception as e:
+                logger.warning('DB helper failed in stored app context: %s', e)
+                return fallback
+
+        # Last resort: create a fresh app (expensive — should rarely reach here)
         try:
             from app import create_app
-
             app = create_app(os.getenv('FLASK_ENV', 'development'))
             with app.app_context():
                 return func()

@@ -158,6 +158,7 @@ async def main():
         logger.info('✅ Rate limiter initialized')
         
         openai_service = get_openai_service()
+        openai_service._app = app  # allow executor threads to reuse the running Flask app context
         logger.info('✅ OpenAI service initialized')
         
         content_fetcher = ContentFetcher()
