@@ -28,11 +28,9 @@ class AppConfig(db.Model):
     @classmethod
     def get(cls, key, default=None):
         if not has_app_context():
-            # No app context - need to create one
-            from app import create_app
-            app = create_app()
-            with app.app_context():
-                return cls.get(key, default)
+            # Cannot query without an app context — return default to avoid
+            # triggering create_app() which acquires pg_advisory_lock and hangs.
+            return default
         
         try:
             config = cls.query.filter_by(key=key).first()
@@ -42,8 +40,7 @@ class AppConfig(db.Model):
             import logging
             logger = logging.getLogger(__name__)
             logger.warning(f'Error reading config {key}: {e}, attempting rollback')
-            if has_app_context():
-                db.session.rollback()
+            db.session.rollback()
             try:
                 config = cls.query.filter_by(key=key).first()
                 return config.value if config else default
@@ -53,11 +50,7 @@ class AppConfig(db.Model):
     @classmethod
     def set(cls, key, value, description=None):
         if not has_app_context():
-            # No app context - need to create one
-            from app import create_app
-            app = create_app()
-            with app.app_context():
-                return cls.set(key, value, description)
+            return  # Cannot write config without an app context
         
         try:
             config = cls.query.filter_by(key=key).first()

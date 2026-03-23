@@ -140,18 +140,28 @@ class ConversationService:
 
             logger.info(f'[OPENAI] Sending {len(messages)} messages to OpenAI (including new user message)')
             
-            # Use OpenAI chat_with_history to include full dialog + system prompt
             # Run the blocking OpenAI call in a thread executor so we don't
             # block the Telethon asyncio event loop.
+            # Wrap in app context so ALL internal DB calls (budget check,
+            # model lookup, usage logging) work without calling create_app().
+            _app = getattr(self.openai_service, '_app', None)
+
+            def _call_openai():
+                ctx = _app.app_context() if _app is not None else None
+                if ctx is not None:
+                    ctx.push()
+                try:
+                    return self.openai_service.chat_with_history(
+                        system_prompt=system_prompt,
+                        messages=messages,
+                        module='conversation'
+                    )
+                finally:
+                    if ctx is not None:
+                        ctx.pop()
+
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: self.openai_service.chat_with_history(
-                    system_prompt=system_prompt,
-                    messages=messages,
-                    module='conversation'
-                )
-            )
+            result = await loop.run_in_executor(None, _call_openai)
 
             if result and 'content' in result and result.get('content'):
                 return result['content']
@@ -196,15 +206,25 @@ class ConversationService:
 
             # Call OpenAI with channel-specific system prompt. This is a
             # potentially blocking network call so run it in an executor.
+            # Wrap in app context so all internal DB calls work correctly.
+            _app = getattr(self.openai_service, '_app', None)
+
+            def _call_openai_channel():
+                ctx = _app.app_context() if _app is not None else None
+                if ctx is not None:
+                    ctx.push()
+                try:
+                    return self.openai_service.chat_with_history(
+                        system_prompt=system_prompt,
+                        messages=messages,
+                        module='conversation'
+                    )
+                finally:
+                    if ctx is not None:
+                        ctx.pop()
+
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: self.openai_service.chat_with_history(
-                    system_prompt=system_prompt,
-                    messages=messages,
-                    module='conversation'
-                )
-            )
+            result = await loop.run_in_executor(None, _call_openai_channel)
 
             if not result or 'content' not in result:
                 logger.warning(f'[CHANNEL RESPONSE] Empty response from OpenAI (mode={mode.value})')
