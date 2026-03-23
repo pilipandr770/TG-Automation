@@ -13,8 +13,12 @@ class Config:
 
     # SQLAlchemy engine options
     SQLALCHEMY_ENGINE_OPTIONS = {
-        'pool_pre_ping': True,  # Test connections before using them
-        'pool_recycle': 3600,   # Recycle connections after 1 hour
+        'pool_pre_ping': True,   # Test connections before using them
+        'pool_recycle': 3600,    # Recycle connections after 1 hour
+        'pool_timeout': 10,      # Max seconds to wait for a pool connection
+        'connect_args': {
+            'options': '-c statement_timeout=8000'  # Kill any query stuck >8s
+        },
     }
 
     # OpenAI
