@@ -37,6 +37,7 @@ class PromptBuilder:
         paid_instructions: Optional[str] = None,
         channel_instructions: Optional[str] = None,
         user_language: Optional[str] = None,
+        global_instructions: Optional[str] = None,
     ) -> str:
         parts = []
 
@@ -44,8 +45,12 @@ class PromptBuilder:
         base_role = self.ROLE_INSTRUCTIONS.get(mode, self.ROLE_INSTRUCTIONS[MessageMode.PRIVATE_DIALOG])
         parts.append(base_role)
 
-        # Global admin instructions (MUST be included)
-        global_instructions = AppConfig.get('openai_prompt_conversation') or ''
+        # Global admin instructions — use preloaded value if provided, else fetch from DB
+        if global_instructions is None:
+            global_instructions = AppConfig.get('openai_prompt_conversation') or ''
+            logger.debug('build_system_prompt: fetched instructions from DB: %d chars', len(global_instructions))
+        else:
+            logger.debug('build_system_prompt: using preloaded instructions: %d chars', len(global_instructions))
         if global_instructions:
             parts.append(f"Global instructions:\n{global_instructions}")
 

@@ -84,7 +84,7 @@ class ConversationService:
         logger.debug(f'[HISTORY] Retrieved {len(history)} messages from conversation {conversation_id}')
         return history
 
-    def _format_context_for_openai(self, conversation, message_history, user_message, mode=MessageMode.PRIVATE_DIALOG):
+    def _format_context_for_openai(self, conversation, message_history, user_message, mode=MessageMode.PRIVATE_DIALOG, custom_instructions=None):
         """Format conversation context for OpenAI API via PromptBuilder."""
         # Build conversation context text
         context_info = f"User: {conversation.first_name or conversation.username or 'User'} (@{conversation.username or 'unknown'})\n"
@@ -102,6 +102,7 @@ class ConversationService:
             mode=mode,
             conversation_context=context_info,
             user_language=conversation.language,
+            global_instructions=custom_instructions,
         )
 
         return system_prompt
@@ -131,8 +132,24 @@ class ConversationService:
             logger.info(f'[CONTEXT] New user message: {user_message[:100]}...')
             logger.info('=' * 70)
 
+            # Load admin DM instructions early — at this point DB session is safe
+            from flask import has_app_context
+            _has_ctx = has_app_context()
+            try:
+                dm_instructions = AppConfig.get('openai_prompt_conversation') or ''
+            except Exception as _e:
+                logger.warning(f'[PROMPT] Failed to load instructions: {_e}')
+                dm_instructions = ''
+            logger.info(f'[PROMPT] has_app_context={_has_ctx} | instructions={len(dm_instructions)} chars'
+                        + (f': "{dm_instructions[:80]}..."' if dm_instructions else ': EMPTY – check /admin/instructions'))
+
             # Format context for OpenAI (private dialog mode)
-            system_prompt = self._format_context_for_openai(conversation, history, user_message, mode=MessageMode.PRIVATE_DIALOG)
+            system_prompt = self._format_context_for_openai(
+                conversation, history, user_message,
+                mode=MessageMode.PRIVATE_DIALOG,
+                custom_instructions=dm_instructions or None,
+            )
+            logger.info(f'[PROMPT] System prompt built: {len(system_prompt)} chars')
 
             # Prepare messages for OpenAI API (proper format)
             messages = history.copy()

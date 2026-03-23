@@ -242,6 +242,21 @@ def _ensure_required_config_keys(app):
         'daily_invitation_limit': '80',
         'invitation_min_delay_seconds': '60',
         'invitation_max_delay_seconds': '180',
+        # OpenAI defaults — seeded once, admin can override via /admin/instructions
+        'openai_model': 'gpt-4o-mini',
+        'openai_daily_budget': '5.0',
+        'openai_prompt_conversation': (
+            'Ти — дружній AI-асистент Telegram-каналу про авто з Європи та аукціони. '
+            'Відповідай ТІЛЬКИ українською мовою. '
+            'Будь корисним, доброзичливим і лаконічним. '
+            'Якщо питання стосується авто, розмитнення або аукціонів — давай детальну відповідь. '
+            'Ненав\'язливо пропонуй підписатися на канал для актуальних пропозицій.'
+        ),
+        'openai_prompt_channel_comments': (
+            'Ти — експерт з авто з Європи та аукціонів. '
+            'Відповідай ТІЛЬКИ українською мовою на коментарі у каналі. '
+            'Давай конкретні, корисні відповіді. Будь коротким і по суті.'
+        ),
     }
     try:
         from app.models import AppConfig
