@@ -139,38 +139,61 @@ class ConversationService:
             messages.append({'role': 'user', 'content': user_message})
 
             logger.info(f'[OPENAI] Sending {len(messages)} messages to OpenAI (including new user message)')
-            
-            # Run the blocking OpenAI call in a thread executor so we don't
-            # block the Telethon asyncio event loop.
-            # Wrap in app context so ALL internal DB calls (budget check,
-            # model lookup, usage logging) work without calling create_app().
-            _app = getattr(self.openai_service, '_app', None)
 
-            def _call_openai():
-                ctx = _app.app_context() if _app is not None else None
-                if ctx is not None:
-                    ctx.push()
-                try:
-                    return self.openai_service.chat_with_history(
-                        system_prompt=system_prompt,
-                        messages=messages,
-                        module='conversation'
-                    )
-                finally:
-                    if ctx is not None:
-                        ctx.pop()
+            # ── All DB work happens HERE in the asyncio coroutine (has app context). ──
+            # Only the raw HTTP request goes into run_in_executor.
 
+            # 1) Budget check — uses DB, must stay in asyncio thread
+            if not self.openai_service._check_budget():
+                logger.warning('[OPENAI] Daily budget exceeded, cannot respond')
+                return "I'm sorry, I couldn't process that right now. Please try again."
+
+            # 2) Resolve model name — uses DB, must stay in asyncio thread
+            model_name = self.openai_service._get_model()
+
+            # 3) Resolve API key and get client — may use DB for key lookup
+            openai_client = self.openai_service.client
+
+            # 4) Build full message list
+            full_messages = [{'role': 'system', 'content': system_prompt}] + messages
+
+            # 5) Run ONLY the blocking HTTP call in a thread — zero DB inside
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, _call_openai)
+            logger.info(f'[OPENAI] Calling API with model={model_name}...')
+            try:
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: openai_client.chat.completions.create(
+                        model=model_name,
+                        messages=full_messages,
+                        temperature=0.7,
+                    )
+                )
+            except Exception as api_err:
+                logger.error(f'[OPENAI] API call failed: {api_err}', exc_info=True)
+                return "I'm sorry, I couldn't process that right now. Please try again."
 
-            if result and 'content' in result and result.get('content'):
-                return result['content']
+            if not response or not response.choices:
+                logger.warning('[OPENAI] Empty response from API')
+                return "I'm sorry, I couldn't process that right now. Please try again."
 
-            logger.warning(
-                '[OPENAI] Empty/invalid response in private dialog: %s',
-                result.get('error') if isinstance(result, dict) else 'unknown result format'
-            )
-            return "I'm sorry, I couldn't process that right now. Please try again."
+            content = response.choices[0].message.content
+            logger.info(f'[OPENAI] Got response ({len(content)} chars)')
+
+            # 6) Log usage — uses DB, back in asyncio thread
+            try:
+                usage = response.usage
+                self.openai_service._log_usage(
+                    module='conversation',
+                    operation='chat_with_history',
+                    model=model_name,
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens,
+                )
+            except Exception as log_err:
+                logger.warning(f'[OPENAI] Usage logging failed (non-fatal): {log_err}')
+
+            return content
 
         except Exception as e:
             logger.error(f'Failed to generate response: {e}')
@@ -204,34 +227,50 @@ class ConversationService:
             messages = history.copy()
             messages.append({'role': 'user', 'content': user_message})
 
-            # Call OpenAI with channel-specific system prompt. This is a
-            # potentially blocking network call so run it in an executor.
-            # Wrap in app context so all internal DB calls work correctly.
-            _app = getattr(self.openai_service, '_app', None)
+            # ── All DB work in asyncio coroutine; only HTTP in executor ──
 
-            def _call_openai_channel():
-                ctx = _app.app_context() if _app is not None else None
-                if ctx is not None:
-                    ctx.push()
-                try:
-                    return self.openai_service.chat_with_history(
-                        system_prompt=system_prompt,
-                        messages=messages,
-                        module='conversation'
-                    )
-                finally:
-                    if ctx is not None:
-                        ctx.pop()
+            # Budget check
+            if not self.openai_service._check_budget():
+                logger.warning('[OPENAI] Daily budget exceeded for channel response')
+                return None
+
+            model_name = self.openai_service._get_model()
+            openai_client = self.openai_service.client
+            full_messages = [{'role': 'system', 'content': system_prompt}] + messages
 
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, _call_openai_channel)
+            try:
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: openai_client.chat.completions.create(
+                        model=model_name,
+                        messages=full_messages,
+                        temperature=0.7,
+                    )
+                )
+            except Exception as api_err:
+                logger.error(f'[CHANNEL RESPONSE] API call failed: {api_err}', exc_info=True)
+                return None
 
-            if not result or 'content' not in result:
+            if not response or not response.choices:
                 logger.warning(f'[CHANNEL RESPONSE] Empty response from OpenAI (mode={mode.value})')
                 return None
 
-            response_text = result['content']
-            logger.info(f'[CHANNEL RESPONSE] Generated {mode.value} response')
+            response_text = response.choices[0].message.content
+            logger.info(f'[CHANNEL RESPONSE] Generated {mode.value} response ({len(response_text)} chars)')
+
+            try:
+                usage = response.usage
+                self.openai_service._log_usage(
+                    module='conversation',
+                    operation='chat_with_history',
+                    model=model_name,
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens,
+                )
+            except Exception as log_err:
+                logger.warning(f'[CHANNEL RESPONSE] Usage logging failed (non-fatal): {log_err}')
+
             return response_text
 
         except Exception as e:
